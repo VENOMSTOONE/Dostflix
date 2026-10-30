@@ -22,13 +22,21 @@ export function classifyMediaItem(item, duplicateInfo = null) {
   let category = 'KEEP'; // 'KEEP' | 'REVIEW' | 'ARCHIVE' | 'EXCLUDE'
   let reason = '';
 
-  // 1. Check for Exact or Near Duplicate Copies (Highest Exclusion Priority)
+  // 1. Check for Exact, Format Variant, or Near Duplicate Copies (Highest Exclusion Priority)
   if (duplicateInfo?.isExactDuplicate) {
     category = 'EXCLUDE';
     uniquenessScore = 5;
     relevanceScore = 15;
     reason = duplicateInfo.reason || 'Excluded from memory selection because an exact identical copy is already included.';
     return createClassificationResult(category, qualityScore, relevanceScore, uniquenessScore, reason, 'duplicate');
+  }
+
+  if (duplicateInfo?.isFormatVariant) {
+    category = 'EXCLUDE';
+    uniquenessScore = 10;
+    relevanceScore = 15;
+    reason = duplicateInfo.reason || 'Excluded because the same image in another format is selected as best version.';
+    return createClassificationResult(category, qualityScore, relevanceScore, uniquenessScore, reason, 'format_variant');
   }
 
   if (duplicateInfo?.isNearDuplicate) {

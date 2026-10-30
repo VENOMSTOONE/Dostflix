@@ -94,10 +94,15 @@ export async function normalizeFileToCanvas(file, maxDimension = 360) {
   }
 
   // Path 2: Standard browser image formats (JPG, PNG, WEBP, etc.)
-  // Strategy A: createImageBitmap (Hardware accelerated, high speed)
+  // Strategy A: createImageBitmap with automatic EXIF orientation normalization
   if (typeof window !== 'undefined' && typeof window.createImageBitmap === 'function') {
     try {
-      const bitmap = await createImageBitmap(file);
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      } catch (_) {
+        bitmap = await createImageBitmap(file);
+      }
       const { width, height } = bitmap;
 
       let targetW = width;
@@ -350,6 +355,81 @@ export function computeSsimScore(vecA, vecB) {
   if (denominator === 0) return 0;
   const ssim = numerator / denominator;
   return Math.max(0, Math.min(1.0, ssim));
+}
+
+/**
+ * Rotates a 32x32 luminance vector by 90, 180, or 270 degrees.
+ * @param {Float32Array} vec
+ * @param {number} degrees (90, 180, or 270)
+ * @returns {Float32Array} Rotated vector
+ */
+export function rotateLuminanceVector(vec, degrees) {
+  if (!vec || degrees === 0) return vec;
+  const size = 32;
+  const rotated = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const srcIdx = y * size + x;
+      let dstIdx;
+      if (degrees === 90) {
+        dstIdx = x * size + (size - 1 - y);
+      } else if (degrees === 180) {
+        dstIdx = (size - 1 - y) * size + (size - 1 - x);
+      } else if (degrees === 270) {
+        dstIdx = (size - 1 - x) * size + y;
+      } else {
+        dstIdx = srcIdx;
+      }
+      rotated[dstIdx] = vec[srcIdx];
+    }
+  }
+  return rotated;
+}
+
+/**
+ * Computes Structural Similarity Index (SSIM) checking 0, 90, 180, 270 degrees
+ * to be fully invariant to EXIF orientation differences across image formats (e.g. HEIC vs JPEG).
+ * @param {Float32Array} vecA
+ * @param {Float32Array} vecB
+ * @returns {number} Best SSIM score across orientations (0.0 to 1.0)
+ */
+export function computeBestSsimScore(vecA, vecB) {
+  if (!vecA || !vecB) return 0;
+  const ssim0 = computeSsimScore(vecA, vecB);
+  if (ssim0 >= 0.88) return ssim0;
+
+  const ssim90 = computeSsimScore(vecA, rotateLuminanceVector(vecB, 90));
+  if (ssim90 >= 0.88) return ssim90;
+
+  const ssim180 = computeSsimScore(vecA, rotateLuminanceVector(vecB, 180));
+  if (ssim180 >= 0.88) return ssim180;
+
+  const ssim270 = computeSsimScore(vecA, rotateLuminanceVector(vecB, 270));
+  return Math.max(ssim0, ssim90, ssim180, ssim270);
+}
+
+/**
+ * Normalizes an item or file into a standardized format name:
+ * 'HEIC' | 'JPEG' | 'PNG' | 'WEBP' | 'GIF' | 'TIFF' | 'UNKNOWN'
+ * @param {object|File} item
+ * @returns {string} Standardized format
+ */
+export function getNormalizedFormat(item) {
+  if (!item) return 'UNKNOWN';
+  if (item.isHeic) return 'HEIC';
+
+  const type = (item.fileType || item.fileBlob?.type || item.type || '').toLowerCase();
+  const name = (item.originalFilename || item.filename || item.name || '').toLowerCase();
+
+  if (type.includes('heic') || type.includes('heif') || name.match(/\.(heic|heif)$/i)) return 'HEIC';
+  if (type.includes('png') || name.endsWith('.png')) return 'PNG';
+  if (type.includes('webp') || name.endsWith('.webp')) return 'WEBP';
+  if (type.includes('jpeg') || type.includes('jpg') || name.match(/\.(jpe?g)$/i)) return 'JPEG';
+  if (type.includes('gif') || name.endsWith('.gif')) return 'GIF';
+  if (type.includes('avif') || name.endsWith('.avif')) return 'AVIF';
+  if (type.includes('tiff') || name.match(/\.(tiff?)$/i)) return 'TIFF';
+
+  return 'JPEG';
 }
 
 /**

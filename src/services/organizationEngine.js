@@ -276,7 +276,7 @@ export async function analyzeAndOrganizeBatch(
       matchExisting: [],
       suggestedNew: [],
       archiveGroup: { title: 'Archive & Documents', files: [] },
-      duplicateGroup: { exact: [], near: [], totalCount: 0 },
+      duplicateGroup: { exact: [], formatVariants: [], near: [], totalCount: 0 },
       burstGroup: { bursts: [], totalCount: 0 },
       unorganized: [],
       overview: {
@@ -285,6 +285,7 @@ export async function analyzeAndOrganizeBatch(
         reviewCount: 0,
         archiveCount: 0,
         exactDuplicateCount: 0,
+        formatVariantCount: 0,
         nearDuplicateCount: 0,
         burstCount: 0,
         excludedCount: 0,
@@ -317,11 +318,11 @@ export async function analyzeAndOrganizeBatch(
   }
 
   // =========================================================================
-  // STAGE 2: 3-LEVEL DUPLICATE & BURST DETECTION
+  // STAGE 2: 4-TIER DUPLICATE & BURST DETECTION
   // =========================================================================
-  progressFn?.({ stage: 'Running exact & perceptual duplicate detection', percent: 45 });
+  progressFn?.({ stage: 'Running exact, format variant & burst detection', percent: 45 });
   const duplicateResults = analyzeDuplicatesAndBursts(unassignedFiles, libraryCandidates);
-  const { exactGroups, nearGroups, burstGroups, itemMap } = duplicateResults;
+  const { exactGroups, formatVariantGroups, nearGroups, burstGroups, itemMap } = duplicateResults;
 
   // =========================================================================
   // STAGE 3: CONTENT CLASSIFICATION & QUALITY TIERING
@@ -651,8 +652,9 @@ export async function analyzeAndOrganizeBatch(
     },
     duplicateGroup: {
       exact: exactGroups,
+      formatVariants: formatVariantGroups,
       near: nearGroups,
-      totalCount: duplicateResults.totalExactDuplicates + duplicateResults.totalNearDuplicates,
+      totalCount: duplicateResults.totalExactDuplicates + duplicateResults.totalFormatVariants + duplicateResults.totalNearDuplicates,
     },
     burstGroup: {
       bursts: burstGroups,
@@ -665,6 +667,7 @@ export async function analyzeAndOrganizeBatch(
       reviewCount,
       archiveCount: archiveFiles.length,
       exactDuplicateCount: duplicateResults.totalExactDuplicates,
+      formatVariantCount: duplicateResults.totalFormatVariants,
       nearDuplicateCount: duplicateResults.totalNearDuplicates,
       burstCount: duplicateResults.totalBurstSequences,
       excludedCount,

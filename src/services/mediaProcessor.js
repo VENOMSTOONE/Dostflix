@@ -497,6 +497,8 @@ export async function processFileItem(file, onProgress) {
     isVerifiedMetadata: metadata.isVerifiedMetadata,
     cameraMake: metadata.cameraMake,
     cameraModel: metadata.cameraModel,
+    orientation: metadata.orientation || 1,
+    lastModified: file.lastModified || (metadata.lastModified ? new Date(metadata.lastModified).getTime() : Date.now()),
     gps: metadata.gps,
     folderName: metadata.folderName,
     assignedMemoryId: null,

@@ -47,6 +47,7 @@ function applyExifToResult(exif, result) {
   }
   if (exif.cameraMake) result.cameraMake = exif.cameraMake;
   if (exif.cameraModel) result.cameraModel = exif.cameraModel;
+  if (exif.orientation) result.orientation = exif.orientation;
   if (exif.gps) {
     result.gps = exif.gps;
     result.isVerifiedMetadata = true;
@@ -65,6 +66,7 @@ export async function extractFileMetadata(file) {
     isVerifiedMetadata: false,
     cameraMake: null,
     cameraModel: null,
+    orientation: 1,
     gps: null, // { latitude, longitude }
     locationName: null,
   };
@@ -272,6 +274,7 @@ function parseTiffHeader(view, tiffOffset) {
     dateTimeOriginal: null,
     cameraMake: null,
     cameraModel: null,
+    orientation: 1,
     gps: null
   };
 
@@ -287,7 +290,9 @@ function parseTiffHeader(view, tiffOffset) {
       if (entryOffset + 12 > view.byteLength) break;
       const tag = view.getUint16(entryOffset, isLittleEndian);
 
-      if (tag === 0x010F) { // Make
+      if (tag === 0x0112) { // Orientation
+        result.orientation = view.getUint16(entryOffset + 8, isLittleEndian);
+      } else if (tag === 0x010F) { // Make
         result.cameraMake = readString(view, entryOffset, tiffOffset, isLittleEndian);
       } else if (tag === 0x0110) { // Model
         result.cameraModel = readString(view, entryOffset, tiffOffset, isLittleEndian);
