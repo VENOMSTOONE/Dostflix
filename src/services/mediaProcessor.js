@@ -4,34 +4,78 @@
 import { extractFileMetadata, isHeicFile } from './exifReader';
 import { findMediaByHash, saveMediaFile, createBlobUrl } from './indexedDbStorage';
 
-// Lazy loader for heic2any in browser environment
-let heic2anyPromise = null;
-async function getHeicConverter() {
+// Lazy loader for modern heic-decode with libheif-js
+let heicDecodePromise = null;
+async function getHeicDecoder() {
   if (typeof window === 'undefined') return null;
-  if (!heic2anyPromise) {
-    heic2anyPromise = import('heic2any').then(m => m.default || m);
+  if (!heicDecodePromise) {
+    heicDecodePromise = import('heic-decode').then(m => m.default || m);
   }
-  return heic2anyPromise;
+  return heicDecodePromise;
 }
 
-// Convert a HEIC / HEIF File or Blob into a browser-compatible JPEG Blob
+// Convert a HEIC / HEIF File or Blob into a browser-compatible JPEG Blob and Thumbnail
 export async function convertHeicToJpeg(file) {
-  const heic2any = await getHeicConverter();
-  if (!heic2any) {
+  const decode = await getHeicDecoder();
+  if (!decode) {
     throw new Error('HEIC decoding requires a browser environment.');
   }
 
-  const result = await heic2any({
-    blob: file,
-    toType: 'image/jpeg',
-    quality: 0.88,
+  const arrayBuffer = await file.arrayBuffer();
+  const { width, height, data } = await decode({ buffer: new Uint8Array(arrayBuffer) });
+
+  if (!width || !height || !data) {
+    throw new Error('HEIC decoding did not produce valid image pixel data.');
+  }
+
+  // 1. Paint to full-resolution canvas
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  const imgData = new ImageData(new Uint8ClampedArray(data), width, height);
+  ctx.putImageData(imgData, 0, 0);
+
+  // 2. Export full-resolution JPEG blob
+  const jpegBlob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('Canvas export to JPEG failed.'));
+      },
+      'image/jpeg',
+      0.90
+    );
   });
 
-  const jpegBlob = Array.isArray(result) ? result[0] : result;
-  if (!jpegBlob || !(jpegBlob instanceof Blob)) {
-    throw new Error('HEIC conversion did not yield a valid image blob.');
+  // 3. Generate lightweight thumbnail (max 360px) in the same pass
+  const maxThumb = 360;
+  let targetW = width;
+  let targetH = height;
+  if (width > maxThumb || height > maxThumb) {
+    if (width > height) {
+      targetW = maxThumb;
+      targetH = Math.max(1, Math.round((height / width) * maxThumb));
+    } else {
+      targetH = maxThumb;
+      targetW = Math.max(1, Math.round((width / height) * maxThumb));
+    }
   }
-  return jpegBlob;
+
+  const thumbCanvas = document.createElement('canvas');
+  thumbCanvas.width = targetW;
+  thumbCanvas.height = targetH;
+  const thumbCtx = thumbCanvas.getContext('2d');
+  thumbCtx.drawImage(canvas, 0, 0, targetW, targetH);
+  const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.82);
+
+  return {
+    jpegBlob,
+    thumbnail: thumbnailDataUrl,
+    width,
+    height,
+  };
 }
 
 // Compute SHA-256 hash using native Web Crypto API
@@ -54,13 +98,14 @@ export async function generateImageThumbnail(file, maxDimension = 360) {
   const isHeic = await isHeicFile(file);
   if (isHeic) {
     try {
-      const jpegBlob = await convertHeicToJpeg(file);
-      const convertedFile = new File(
-        [jpegBlob],
-        (file.name || 'image').replace(/\.(heic|heif)$/i, '') + '.jpg',
-        { type: 'image/jpeg' }
-      );
-      return await generateImageThumbnail(convertedFile, maxDimension);
+      const { thumbnail, width, height } = await convertHeicToJpeg(file);
+      return {
+        thumbnail,
+        width,
+        height,
+        format: 'image/jpeg',
+        isUnsupportedPreview: false,
+      };
     } catch (err) {
       console.warn('HEIC thumbnail conversion failed:', err);
       return {
@@ -310,20 +355,23 @@ export async function processFileItem(file, onProgress) {
 
   if (isHeic) {
     onProgress?.({ stage: 'converting', percent: 55 });
+    let conversionResult;
     try {
-      convertedBlob = await convertHeicToJpeg(file);
+      conversionResult = await convertHeicToJpeg(file);
     } catch (conversionErr) {
       console.error(`Failed to convert HEIC image "${file.name}":`, conversionErr);
       throw new Error(`HEIC conversion failed for "${file.name}": ${conversionErr.message || conversionErr}`);
     }
 
     onProgress?.({ stage: 'thumbnail', percent: 75 });
-    const convertedFile = new File(
-      [convertedBlob],
-      file.name.replace(/\.(heic|heif)$/i, '') + '.jpg',
-      { type: 'image/jpeg' }
-    );
-    visualInfo = await generateImageThumbnail(convertedFile);
+    convertedBlob = conversionResult.jpegBlob;
+    visualInfo = {
+      thumbnail: conversionResult.thumbnail,
+      width: conversionResult.width,
+      height: conversionResult.height,
+      duration: 0,
+      isUnsupportedPreview: false,
+    };
   } else if (isImage) {
     onProgress?.({ stage: 'thumbnail', percent: 70 });
     visualInfo = await generateImageThumbnail(file);
