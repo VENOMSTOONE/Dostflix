@@ -31,6 +31,7 @@ import confetti from 'canvas-confetti';
 import UploadDropzone from '../components/studio/UploadDropzone';
 import UploadQueueView from '../components/studio/UploadQueueView';
 import OrganizationReviewModal from '../components/studio/OrganizationReviewModal';
+import AnalysisProgressModal from '../components/studio/AnalysisProgressModal';
 import CreateMemoryModal from '../components/studio/CreateMemoryModal';
 import EditMemoryModal from '../components/studio/EditMemoryModal';
 import ManageMediaModal from '../components/studio/ManageMediaModal';
@@ -123,7 +124,16 @@ export default function MemoryStudio() {
 
     try {
       setIsAnalyzing(true);
-      setAnalysisProgress({ stage: 'Analyzing image clarity & visual hashes...', percent: 15 });
+      setAnalysisProgress({ 
+        stageKey: 'reading_files', 
+        stage: 'Reading uploaded files', 
+        stageIndex: 0,
+        percent: 8,
+        filesProcessed: 0,
+        totalFiles: filesToAnalyze.length,
+        filesRemaining: filesToAnalyze.length,
+        currentFile: filesToAnalyze[0]?.originalFilename || ''
+      });
 
       const results = await analyzeAndOrganizeBatch(filesToAnalyze, memories, allMediaFiles, (prog) => {
         setAnalysisProgress(prog);
@@ -497,33 +507,11 @@ export default function MemoryStudio() {
 
       </div>
 
-      {/* ANALYSIS IN PROGRESS OVERLAY */}
-      {isAnalyzing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in">
-          <div className="w-full max-w-md bg-zinc-950 border border-white/10 rounded-3xl p-6 sm:p-8 text-center shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-purple-500 via-emerald-400 to-indigo-500 animate-pulse" />
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/10">
-              <Sparkles size={28} className="animate-spin text-emerald-400" />
-            </div>
-            <h3 className="text-lg font-black text-white tracking-tight mb-1">
-              Curating Memories
-            </h3>
-            <p className="text-xs text-zinc-400 mb-6">
-              {analysisProgress?.stage || 'Analyzing visual clarity and clustering related moments...'}
-            </p>
-            {/* Progress bar */}
-            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-emerald-500 to-purple-500 transition-all duration-300" 
-                style={{ width: `${analysisProgress?.percent || 30}%` }}
-              />
-            </div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-3 block">
-              {analysisProgress?.percent || 30}% complete
-            </span>
-          </div>
-        </div>
-      )}
+      {/* ANALYSIS IN PROGRESS MODAL */}
+      <AnalysisProgressModal 
+        progress={analysisProgress} 
+        isVisible={isAnalyzing} 
+      />
 
       {/* MODAL 1: ORGANIZATION REVIEW SCREEN */}
       {analysisResults && (

@@ -263,6 +263,11 @@ export async function analyzeAndOrganizeBatch(
   }
   if (!Array.isArray(library)) library = [];
 
+  const notify = (data) => {
+    if (typeof progressFn === 'function') progressFn(data);
+    else if (typeof onProgress === 'function') onProgress(data);
+  };
+
   const matchExisting = [];
   const suggestedNew = [];
   const unorganized = [];
@@ -296,20 +301,62 @@ export async function analyzeAndOrganizeBatch(
     };
   }
 
+  // =========================================================================
+  // STAGE 1: READING UPLOADED FILES
+  // =========================================================================
+  notify({
+    stageIndex: 0,
+    stageKey: 'reading_files',
+    stage: 'Reading uploaded files',
+    percent: 8,
+    filesProcessed: 0,
+    totalFiles,
+    filesRemaining: totalFiles,
+    currentFile: unassignedFiles[0]?.originalFilename || 'Preparing files for inspection...'
+  });
+
   // Filter existing library items so unassignedFiles aren't matched against themselves in library
   const unassignedIds = new Set(unassignedFiles.map(f => f.id));
   const libraryCandidates = library.filter(libItem => !unassignedIds.has(libItem.id));
 
   // =========================================================================
-  // STAGE 1: VISUAL FINGERPRINTING & PERCEPTUAL HASHING
+  // STAGE 2: EXTRACTING METADATA
   // =========================================================================
-  progressFn?.({ stage: 'Generating DCT perceptual hashes & fingerprints', percent: 20 });
   for (let i = 0; i < unassignedFiles.length; i++) {
     const item = unassignedFiles[i];
-    await ensureFingerprint(item);
-    if (!item.visionAnalysis) {
-      item.visionAnalysis = await analyzeMediaContent(item, item.visualMetrics);
+    notify({
+      stageIndex: 1,
+      stageKey: 'extracting_metadata',
+      stage: 'Extracting metadata',
+      percent: Math.min(25, Math.round(8 + ((i + 1) / totalFiles) * 17)),
+      filesProcessed: i + 1,
+      totalFiles,
+      filesRemaining: totalFiles - (i + 1),
+      currentFile: item.originalFilename || `File ${i + 1}`
+    });
+    // Ensure capture date & dimensions are ready
+    if (!item.captureDate && item.lastModified) {
+      item.captureDate = new Date(item.lastModified).toISOString();
+      item.isVerifiedMetadata = false;
     }
+  }
+
+  // =========================================================================
+  // STAGE 3: VISUAL FINGERPRINTS & PERCEPTUAL HASHING
+  // =========================================================================
+  for (let i = 0; i < unassignedFiles.length; i++) {
+    const item = unassignedFiles[i];
+    notify({
+      stageIndex: 2,
+      stageKey: 'visual_fingerprints',
+      stage: 'Generating visual fingerprints',
+      percent: Math.min(45, Math.round(25 + ((i + 1) / totalFiles) * 20)),
+      filesProcessed: i + 1,
+      totalFiles,
+      filesRemaining: totalFiles - (i + 1),
+      currentFile: item.originalFilename || `File ${i + 1}`
+    });
+    await ensureFingerprint(item);
   }
 
   // Also ensure fingerprints on library candidates for cross-vault comparison
@@ -318,37 +365,70 @@ export async function analyzeAndOrganizeBatch(
   }
 
   // =========================================================================
-  // STAGE 2: 4-TIER DUPLICATE & BURST DETECTION
+  // STAGE 4: 4-TIER DUPLICATE & BURST DETECTION
   // =========================================================================
-  progressFn?.({ stage: 'Running exact, format variant & burst detection', percent: 45 });
+  notify({
+    stageIndex: 3,
+    stageKey: 'detecting_duplicates',
+    stage: 'Detecting duplicates & bursts',
+    percent: 55,
+    filesProcessed: totalFiles,
+    totalFiles,
+    filesRemaining: 0,
+    currentFile: 'Cross-format variants, exact byte hashes & sequence detection'
+  });
   const duplicateResults = analyzeDuplicatesAndBursts(unassignedFiles, libraryCandidates);
   const { exactGroups, formatVariantGroups, nearGroups, burstGroups, itemMap } = duplicateResults;
 
   // =========================================================================
-  // STAGE 3: CONTENT CLASSIFICATION & QUALITY TIERING
+  // STAGE 5: CONTENT CLASSIFICATION & QUALITY SCORING
   // =========================================================================
-  onProgress?.({ stage: 'Classifying content & technical quality', percent: 65 });
   const archiveFiles = [];
   const eligibleFiles = []; // Files eligible for memory recommendation (KEEP & REVIEW)
 
-  unassignedFiles.forEach((file) => {
+  for (let i = 0; i < unassignedFiles.length; i++) {
+    const file = unassignedFiles[i];
     const dupInfo = itemMap.get(file.id);
     const classification = classifyMediaItem(file, dupInfo);
     file.classification = classification;
+
+    if (!file.visionAnalysis) {
+      file.visionAnalysis = await analyzeMediaContent(file, file.visualMetrics);
+    }
 
     if (classification.category === 'ARCHIVE') {
       archiveFiles.push(file);
     } else {
       eligibleFiles.push(file);
     }
-  });
+
+    notify({
+      stageIndex: 4,
+      stageKey: 'analyzing_content',
+      stage: 'Analyzing image content',
+      percent: Math.min(75, Math.round(55 + ((i + 1) / totalFiles) * 20)),
+      filesProcessed: i + 1,
+      totalFiles,
+      filesRemaining: totalFiles - (i + 1),
+      currentFile: file.originalFilename || `File ${i + 1}`
+    });
+  }
 
   const remainingFiles = [...eligibleFiles];
 
   // =========================================================================
-  // STAGE 4: MATCH AGAINST EXISTING MEMORIES
+  // STAGE 6: GROUPING RELATED MEMORIES
   // =========================================================================
-  onProgress?.({ stage: 'Matching against existing memories', percent: 75 });
+  notify({
+    stageIndex: 5,
+    stageKey: 'grouping_memories',
+    stage: 'Grouping related memories',
+    percent: 80,
+    filesProcessed: totalFiles,
+    totalFiles,
+    filesRemaining: 0,
+    currentFile: 'Matching existing memories & clustering spatio-temporal moments'
+  });
   existingMemories.forEach((memory) => {
     const memoryDate = memory.date ? new Date(memory.date) : null;
     const memoryTitleLower = (memory.title || '').trim().toLowerCase();
@@ -445,9 +525,18 @@ export async function analyzeAndOrganizeBatch(
   });
 
   // =========================================================================
-  // STAGE 5: CLUSTER REMAINING FILES INTO NEW MEMORIES
+  // STAGE 6: CLUSTER REMAINING FILES INTO NEW MEMORIES
   // =========================================================================
-  onProgress?.({ stage: 'Intelligent memory clustering & cover selection', percent: 85 });
+  notify({
+    stageIndex: 5,
+    stageKey: 'grouping_memories',
+    stage: 'Grouping related memories',
+    percent: 82,
+    filesProcessed: totalFiles,
+    totalFiles,
+    filesRemaining: 0,
+    currentFile: 'Clustering moments by time, location, and visual similarity'
+  });
   
   // Sort remaining chronologically
   remainingFiles.sort((a, b) => {
@@ -523,8 +612,19 @@ export async function analyzeAndOrganizeBatch(
   }
 
   // =========================================================================
-  // STAGE 6: EVALUATE CLUSTERS & SELECT COVERS
+  // STAGE 7: PREPARING RECOMMENDATIONS & SELECTING HERO COVERS
   // =========================================================================
+  notify({
+    stageIndex: 6,
+    stageKey: 'preparing_recommendations',
+    stage: 'Preparing recommendations',
+    percent: 94,
+    filesProcessed: totalFiles,
+    totalFiles,
+    filesRemaining: 0,
+    currentFile: 'Selecting cinematic cover candidates & curation badges'
+  });
+
   clusters.forEach((cluster, idx) => {
     if (cluster.length >= 2) {
       const dates = cluster.map(f => f.captureDate).filter(Boolean);
@@ -640,7 +740,16 @@ export async function analyzeAndOrganizeBatch(
   const reviewCount = unassignedFiles.filter(f => f.classification?.category === 'REVIEW').length;
   const excludedCount = unassignedFiles.filter(f => f.classification?.category === 'EXCLUDE').length;
 
-  onProgress?.({ stage: 'Curation complete', percent: 100 });
+  notify({
+    stageIndex: 7,
+    stageKey: 'complete',
+    stage: 'Curation complete',
+    percent: 100,
+    filesProcessed: totalFiles,
+    totalFiles,
+    filesRemaining: 0,
+    currentFile: 'Organization ready for review'
+  });
 
   return {
     matchExisting,
