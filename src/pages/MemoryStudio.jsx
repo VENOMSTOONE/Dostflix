@@ -58,6 +58,8 @@ export default function MemoryStudio() {
   // Analysis & Review State
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState({ stage: 'Starting analysis...', percent: 10 });
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -103,7 +105,7 @@ export default function MemoryStudio() {
   };
 
   // Run the Intelligent Organization Engine on processed files
-  const handleStartOrganization = () => {
+  const handleStartOrganization = async () => {
     soundFx.playPop();
     const completedItems = uploadQueue
       .filter(item => item.status === 'completed' && item.result)
@@ -119,9 +121,22 @@ export default function MemoryStudio() {
       return;
     }
 
-    const results = analyzeAndOrganizeBatch(filesToAnalyze, memories);
-    setAnalysisResults(results);
-    setIsReviewModalOpen(true);
+    try {
+      setIsAnalyzing(true);
+      setAnalysisProgress({ stage: 'Analyzing image clarity & visual hashes...', percent: 15 });
+
+      const results = await analyzeAndOrganizeBatch(filesToAnalyze, memories, (prog) => {
+        setAnalysisProgress(prog);
+      });
+
+      setAnalysisResults(results);
+      setIsReviewModalOpen(true);
+    } catch (err) {
+      console.error('Organization analysis failed:', err);
+      alert('Analysis encountered an issue: ' + (err.message || err));
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   // Apply suggestions from review modal: Add files to existing memories
@@ -139,7 +154,15 @@ export default function MemoryStudio() {
   // Apply suggestions from review modal: Create suggested new memories
   const handleCreateSuggestedMemories = async (groupsToCreate) => {
     for (const group of groupsToCreate) {
-      const assetUrls = group.files.map(f => f.previewUrl || f.thumbnail || f.fileUrl).filter(Boolean);
+      // Filter out files that were explicitly excluded (duplicates or unsuited items)
+      const activeFiles = group.files.filter(f => f.classification?.category !== 'EXCLUDE');
+      const filesToInclude = activeFiles.length > 0 ? activeFiles : group.files;
+      const assetUrls = filesToInclude.map(f => f.previewUrl || f.thumbnail || f.fileUrl).filter(Boolean);
+
+      // Determine hero cover photo
+      const coverFile = group.files.find(f => f.id === group.selectedCoverId) || filesToInclude[0] || group.files[0];
+      const coverUrl = coverFile?.previewUrl || coverFile?.thumbnail || assetUrls[0];
+
       const newMem = addMemory({
         title: group.suggestedTitle,
         date: group.suggestedDate ? group.suggestedDate.split('T')[0] : (new Date().toISOString().split('T')[0]),
@@ -147,11 +170,11 @@ export default function MemoryStudio() {
         collectionId: group.suggestedCategory || 'coll-keepsakes',
         mood: group.suggestedMood || 'happy',
         assets: assetUrls,
-        thumbnail: assetUrls[0],
+        thumbnail: coverUrl,
       });
 
       // Link files to new memory in IndexedDB
-      for (const file of group.files) {
+      for (const file of filesToInclude) {
         await updateMediaFile(file.id, { assignedMemoryId: newMem.id });
       }
     }
@@ -473,6 +496,34 @@ export default function MemoryStudio() {
         )}
 
       </div>
+
+      {/* ANALYSIS IN PROGRESS OVERLAY */}
+      {isAnalyzing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in">
+          <div className="w-full max-w-md bg-zinc-950 border border-white/10 rounded-3xl p-6 sm:p-8 text-center shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-purple-500 via-emerald-400 to-indigo-500 animate-pulse" />
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/10">
+              <Sparkles size={28} className="animate-spin text-emerald-400" />
+            </div>
+            <h3 className="text-lg font-black text-white tracking-tight mb-1">
+              Curating Memories
+            </h3>
+            <p className="text-xs text-zinc-400 mb-6">
+              {analysisProgress?.stage || 'Analyzing visual clarity and clustering related moments...'}
+            </p>
+            {/* Progress bar */}
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-emerald-500 to-purple-500 transition-all duration-300" 
+                style={{ width: `${analysisProgress?.percent || 30}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-3 block">
+              {analysisProgress?.percent || 30}% complete
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* MODAL 1: ORGANIZATION REVIEW SCREEN */}
       {analysisResults && (

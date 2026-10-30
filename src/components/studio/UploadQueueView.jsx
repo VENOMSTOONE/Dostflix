@@ -63,6 +63,8 @@ export default function UploadQueueView({
         return `Converting HEIC to browser format (${progress || 55}%)`;
       case 'thumbnail':
         return `Generating preview (${progress || 75}%)`;
+      case 'visual_analysis':
+        return `Analyzing visual quality & clarity (${progress || 80}%)`;
       case 'storing':
         return `Writing to local vault (${progress || 90}%)`;
       case 'completed':

@@ -3,6 +3,7 @@
 
 import { extractFileMetadata, isHeicFile } from './exifReader';
 import { findMediaByHash, saveMediaFile, createBlobUrl } from './indexedDbStorage';
+import { analyzeImageQualityAndContent, sampleVideoKeyframes } from './visualAnalysisEngine';
 
 // Lazy loader for modern heic-decode with libheif-js
 let heicDecodePromise = null;
@@ -399,6 +400,26 @@ export async function processFileItem(file, onProgress) {
     visualInfo = await generateVideoPoster(file);
   }
 
+  // Visual Quality & Perceptual Hash Analysis (Fast, lightweight execution)
+  onProgress?.({ stage: 'visual_analysis', percent: 80 });
+  let visualMetrics = null;
+  if (isImage && visualInfo.thumbnail) {
+    try {
+      const img = new Image();
+      img.src = visualInfo.thumbnail;
+      await new Promise((res) => { img.onload = res; img.onerror = res; });
+      visualMetrics = await analyzeImageQualityAndContent(img, visualInfo.width, visualInfo.height);
+    } catch (e) {
+      console.warn('Fast visual analysis skipped:', e);
+    }
+  } else if (isVideo) {
+    try {
+      visualMetrics = await sampleVideoKeyframes(file);
+    } catch (e) {
+      console.warn('Video keyframe analysis skipped:', e);
+    }
+  }
+
   // Create live blob preview URLs:
   // For HEIC files, convertedBlob is used for instant browser previews;
   // fileBlob preserves the original high-resolution HEIC file for download and permanent storage.
@@ -415,6 +436,7 @@ export async function processFileItem(file, onProgress) {
     hash,
     isDuplicate,
     duplicateOfId: isDuplicate ? existingWithHash[0].id : null,
+    visualMetrics: visualMetrics || null,
     // Preserve the original uploaded file (HEIC or other format)
     fileBlob: file,
     // Converted JPEG representation for browser rendering

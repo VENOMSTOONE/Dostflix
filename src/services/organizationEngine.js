@@ -1,8 +1,16 @@
-// Intelligent Memory Organization Engine for Dostflix Memory Studio
-// Ground-truth clustering based strictly on verifiable metadata (EXIF, GPS, folders, timestamps, sequences).
-// NO fabricated dates, NO fake locations ("Squad Hangout", etc.), NO invented squad titles.
+// Intelligent Memory Organization & Curation Engine for Dostflix Memory Studio
+// Ground-truth clustering based on verified metadata, perceptual visual similarity,
+// technical quality assessment, duplicate/burst reduction, and transparent curation tiers.
+// NO fabricated dates, NO fake squad titles, NO facial recognition.
 
-// Haversine distance in kilometers between two GPS coordinates
+import { calculateHammingDistance, analyzeImageQualityAndContent } from './visualAnalysisEngine.js';
+import { analyzeDuplicatesAndBursts } from './duplicateDetection.js';
+import { classifyMediaItem, selectBestCoverCandidates } from './contentClassifier.js';
+import { analyzeMediaContent } from './visionAiService.js';
+
+/**
+ * Haversine distance in kilometers between two GPS coordinates
+ */
 export function calculateGpsDistanceKm(lat1, lon1, lat2, lon2) {
   if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
   const R = 6371; // Earth radius in km
@@ -16,7 +24,9 @@ export function calculateGpsDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Check if two timestamps are within a given time window (in hours)
+/**
+ * Check if two timestamps are within a given time window (in hours)
+ */
 export function isWithinHours(dateStr1, dateStr2, maxHours = 6) {
   if (!dateStr1 || !dateStr2) return false;
   const t1 = new Date(dateStr1).getTime();
@@ -26,10 +36,11 @@ export function isWithinHours(dateStr1, dateStr2, maxHours = 6) {
   return diffHours <= maxHours;
 }
 
-// Check if two filenames appear to be part of a sequential camera burst or batch
+/**
+ * Check if two filenames appear to be part of a sequential camera burst or batch
+ */
 export function isSequentialFilename(name1, name2) {
   if (!name1 || !name2) return false;
-  // Match prefix and trailing number, e.g., "IMG_1042.jpg" -> prefix="img_", num=1042
   const re = /^(.*?)(\d+)(?:\.[^.]+)?$/i;
   const m1 = name1.match(re);
   const m2 = name2.match(re);
@@ -39,16 +50,20 @@ export function isSequentialFilename(name1, name2) {
   return diff >= 1 && diff <= 5; // within 5 consecutive frames
 }
 
-// Helper to check if a folder name is meaningful (not generic system folders)
+/**
+ * Helper to check if a folder name is meaningful (not generic system folders)
+ */
 export function isMeaningfulFolder(folderName) {
   if (!folderName) return false;
   const generic = ['media', 'dcim', 'images', 'photos', 'camera', 'downloads', 'pictures', 'videos', '100apple', '100media'];
   return !generic.includes(folderName.trim().toLowerCase());
 }
 
-// Generate an authentic title from real metadata (Folder > Date > Neutral Fallback)
-// Never fabricates fake squad events or fantasy dates.
-export function suggestMemoryTitle(files) {
+/**
+ * Generate an authentic title from real metadata (Folder > AI Scene > Verified Date > Neutral Fallback)
+ * Never fabricates fake squad events or fantasy dates.
+ */
+export function suggestMemoryTitle(files, sceneContext = null) {
   if (!files || files.length === 0) return 'Suggested Memory';
 
   // 1. Check for shared meaningful folder name
@@ -68,7 +83,12 @@ export function suggestMemoryTitle(files) {
     }
   }
 
-  // 2. Derive from verified or genuine capture date
+  // 2. Check for common scene context if provided by vision analysis
+  if (sceneContext && sceneContext.length > 2) {
+    return sceneContext.replace(/\b\w/g, l => l.toUpperCase());
+  }
+
+  // 3. Derive from verified or genuine capture date
   const validDates = files
     .map(f => f.captureDate)
     .filter(Boolean)
@@ -86,27 +106,140 @@ export function suggestMemoryTitle(files) {
     return `Suggested Memory — ${formattedDate}`;
   }
 
-  // 3. Fallback: Neutral label (no fake dates or made-up event names)
+  // 4. Fallback: Neutral label (no fake dates or made-up event names)
   return 'Suggested Memory';
 }
 
 /**
- * Main Analysis & Clustering Engine
- * Grounded strictly in real file metadata.
+ * Ensures an image has visualMetrics (pHash, sharpness, exposure).
+ * Computes them dynamically if missing from prior uploads.
  */
-export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []) {
-  const matchExisting = []; // Matches to existing memories
-  const suggestedNew = [];  // New group suggestions
-  const unorganized = [];   // Isolated or low-confidence files
+async function ensureVisualMetrics(item) {
+  if (item.visualMetrics && item.visualMetrics.pHash) {
+    return item.visualMetrics;
+  }
 
-  // Only analyze unassigned files
+  if (typeof window === 'undefined') {
+    return {
+      pHash: '0000000000000000',
+      qualityScore: 60,
+      sharpnessScore: 60,
+      exposureScore: 60,
+      isBlurry: false,
+      isBlank: false,
+    };
+  }
+
+  try {
+    const imgUrl = item.thumbnail || item.previewUrl;
+    if (!imgUrl) throw new Error('No preview URL available for visual analysis');
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = imgUrl;
+    });
+
+    const metrics = await analyzeImageQualityAndContent(img, item.dimensions?.width, item.dimensions?.height);
+    item.visualMetrics = metrics;
+    return metrics;
+  } catch (err) {
+    return {
+      pHash: '0000000000000000',
+      qualityScore: 50,
+      sharpnessScore: 50,
+      exposureScore: 50,
+      isBlurry: false,
+      isBlank: false,
+    };
+  }
+}
+
+/**
+ * Comprehensive Intelligent Memory Organization & Curation Engine
+ * Integrates metadata, visual content analysis, duplicate detection, burst detection,
+ * quality scoring, and image recommendation.
+ */
+export async function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = [], onProgress) {
+  const matchExisting = [];
+  const suggestedNew = [];
+  const unorganized = [];
+
+  // Filter unassigned files
   const unassignedFiles = uploadedMediaList.filter(f => !f.assignedMemoryId);
-  const remainingFiles = [...unassignedFiles];
+  const totalFiles = unassignedFiles.length;
+
+  if (totalFiles === 0) {
+    return {
+      matchExisting: [],
+      suggestedNew: [],
+      archiveGroup: { title: 'Archive & Documents', files: [] },
+      duplicateGroup: { exact: [], near: [], totalCount: 0 },
+      burstGroup: { bursts: [], totalCount: 0 },
+      unorganized: [],
+      overview: {
+        totalAnalyzed: 0,
+        recommendedCount: 0,
+        reviewCount: 0,
+        archiveCount: 0,
+        exactDuplicateCount: 0,
+        nearDuplicateCount: 0,
+        burstCount: 0,
+        excludedCount: 0,
+        unorganizedCount: 0,
+        suggestedMemoriesCount: 0,
+        existingMatchesCount: 0,
+      },
+    };
+  }
 
   // =========================================================================
-  // STEP 1: MATCH AGAINST EXISTING MEMORIES
+  // STAGE 1: VISUAL METRICS & COMPUTER VISION ANALYSIS
   // =========================================================================
-  existingMemories.forEach(memory => {
+  onProgress?.({ stage: 'Visual analysis & perceptual hashing', percent: 20 });
+  for (let i = 0; i < unassignedFiles.length; i++) {
+    const item = unassignedFiles[i];
+    const metrics = await ensureVisualMetrics(item);
+    if (!item.visionAnalysis) {
+      item.visionAnalysis = await analyzeMediaContent(item, metrics);
+    }
+  }
+
+  // =========================================================================
+  // STAGE 2: DUPLICATE & BURST DETECTION
+  // =========================================================================
+  onProgress?.({ stage: 'Detecting duplicates and burst sequences', percent: 45 });
+  const duplicateResults = analyzeDuplicatesAndBursts(unassignedFiles);
+  const { exactGroups, nearGroups, burstGroups, itemMap } = duplicateResults;
+
+  // =========================================================================
+  // STAGE 3: CONTENT CLASSIFICATION & QUALITY TIERING
+  // =========================================================================
+  onProgress?.({ stage: 'Classifying content & technical quality', percent: 65 });
+  const archiveFiles = [];
+  const eligibleFiles = []; // Files eligible for memory recommendation (KEEP & REVIEW)
+
+  unassignedFiles.forEach((file) => {
+    const dupInfo = itemMap.get(file.id);
+    const classification = classifyMediaItem(file, dupInfo);
+    file.classification = classification;
+
+    if (classification.category === 'ARCHIVE') {
+      archiveFiles.push(file);
+    } else {
+      eligibleFiles.push(file);
+    }
+  });
+
+  const remainingFiles = [...eligibleFiles];
+
+  // =========================================================================
+  // STAGE 4: MATCH AGAINST EXISTING MEMORIES
+  // =========================================================================
+  onProgress?.({ stage: 'Matching against existing memories', percent: 75 });
+  existingMemories.forEach((memory) => {
     const memoryDate = memory.date ? new Date(memory.date) : null;
     const memoryTitleLower = (memory.title || '').trim().toLowerCase();
     const memoryLocationLower = (memory.location || '').trim().toLowerCase();
@@ -114,7 +247,10 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
     const matchReasons = new Set();
     let totalScore = 0;
 
-    remainingFiles.forEach(file => {
+    remainingFiles.forEach((file) => {
+      // Don't match duplicate copies or excluded files to existing memories
+      if (file.classification?.category === 'EXCLUDE') return;
+
       let fileScore = 0;
       const fileReasons = [];
 
@@ -136,7 +272,6 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
       // Signal B: Shared location keyword in filename or folder
       const filenameLower = (file.originalFilename || '').toLowerCase();
       const folderLower = (file.folderName || '').toLowerCase();
-
       if (memoryLocationLower && memoryLocationLower.length > 2) {
         if (filenameLower.includes(memoryLocationLower) || folderLower.includes(memoryLocationLower)) {
           fileScore += 40;
@@ -165,7 +300,7 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
         }
       }
 
-      // Threshold to consider matched to this memory
+      // Threshold to consider matched
       if (fileScore >= 40) {
         matchedFiles.push({ file, score: fileScore });
         fileReasons.forEach(r => matchReasons.add(r));
@@ -175,7 +310,6 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
 
     if (matchedFiles.length > 0) {
       const avgScore = totalScore / matchedFiles.length;
-      // High confidence requires multi-signal or very high match
       const confidenceLevel = avgScore >= 70 ? 'high' : (avgScore >= 45 ? 'medium' : 'low');
       const confidence = confidenceLevel === 'high' 
         ? 'HIGH CONFIDENCE' 
@@ -191,7 +325,6 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
         confidenceLevel,
       });
 
-      // Remove matched files from remaining pool
       const matchedIds = new Set(matchedFiles.map(m => m.file.id));
       for (let i = remainingFiles.length - 1; i >= 0; i--) {
         if (matchedIds.has(remainingFiles[i].id)) {
@@ -202,9 +335,11 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
   });
 
   // =========================================================================
-  // STEP 2: CLUSTER REMAINING FILES INTO NEW MEMORIES
+  // STAGE 5: CLUSTER REMAINING FILES INTO NEW MEMORIES
   // =========================================================================
-  // Sort remaining files chronologically by capture date, or lastModified
+  onProgress?.({ stage: 'Intelligent memory clustering & cover selection', percent: 85 });
+  
+  // Sort remaining chronologically
   remainingFiles.sort((a, b) => {
     const tA = a.captureDate ? new Date(a.captureDate).getTime() : 0;
     const tB = b.captureDate ? new Date(b.captureDate).getTime() : 0;
@@ -214,7 +349,12 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
   const clusters = [];
   let currentCluster = [];
 
-  remainingFiles.forEach(file => {
+  remainingFiles.forEach((file) => {
+    // If file is an excluded duplicate, keep it separate from primary clusters
+    if (file.classification?.category === 'EXCLUDE') {
+      return;
+    }
+
     if (currentCluster.length === 0) {
       currentCluster.push(file);
       return;
@@ -224,7 +364,7 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
     const previousFile = currentCluster[currentCluster.length - 1];
     let isConnected = false;
 
-    // Signal 1: Proximity in time (within 6 hours of previous file, and within 18 hours of cluster start)
+    // Signal 1: Proximity in time (within 6h of previous file, within 18h of cluster start)
     if (file.captureDate && previousFile.captureDate && anchorFile.captureDate) {
       if (isWithinHours(file.captureDate, previousFile.captureDate, 6) && 
           isWithinHours(file.captureDate, anchorFile.captureDate, 18)) {
@@ -247,7 +387,15 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
       }
     }
 
-    // Signal 4: Sequential filename burst (e.g. IMG_1041.jpg, IMG_1042.jpg)
+    // Signal 4: Perceptual Visual Similarity (Hamming distance <= 14)
+    if (file.visualMetrics?.pHash && previousFile.visualMetrics?.pHash) {
+      const dist = calculateHammingDistance(file.visualMetrics.pHash, previousFile.visualMetrics.pHash);
+      if (dist <= 14) {
+        isConnected = true;
+      }
+    }
+
+    // Signal 5: Sequential filename burst (e.g. IMG_1041.jpg, IMG_1042.jpg)
     if (isSequentialFilename(file.originalFilename, previousFile.originalFilename)) {
       isConnected = true;
     }
@@ -265,10 +413,9 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
   }
 
   // =========================================================================
-  // STEP 3: EVALUATE CLUSTERS (STRICT EVIDENCE & CONFIDENCE)
+  // STAGE 6: EVALUATE CLUSTERS & SELECT COVERS
   // =========================================================================
   clusters.forEach((cluster, idx) => {
-    // Only clusters with 2 or more files and at least one strong unifying signal become suggestions
     if (cluster.length >= 2) {
       const dates = cluster.map(f => f.captureDate).filter(Boolean);
       const verifiedDates = cluster.filter(f => f.isVerifiedMetadata && f.captureDate);
@@ -286,7 +433,6 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
         }
       }
 
-      // Count strong signals
       let signalCount = 0;
       const reasons = [];
 
@@ -317,68 +463,105 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
         reasons.push('Consecutive camera shutter sequence detected');
       }
 
-      // If there are zero matching signals, files are random — move to unorganized
+      // Check average visual quality
+      const avgQuality = Math.round(cluster.reduce((acc, f) => acc + (f.classification?.qualityScore || 60), 0) / cluster.length);
+      reasons.push(`Average visual quality: ${avgQuality}/100`);
+
       if (signalCount < 1.0) {
         unorganized.push(...cluster);
         return;
       }
 
-      // Confidence requires multiple verifiable signals for HIGH
       let confidenceLevel = 'low';
-      if (signalCount >= 2.0) {
-        confidenceLevel = 'high';
-      } else if (signalCount >= 1.0) {
-        confidenceLevel = 'medium';
-      }
+      if (signalCount >= 2.0) confidenceLevel = 'high';
+      else if (signalCount >= 1.0) confidenceLevel = 'medium';
 
       const confidence = confidenceLevel === 'high' 
         ? 'HIGH CONFIDENCE' 
         : (confidenceLevel === 'medium' ? 'MEDIUM CONFIDENCE' : 'LOW CONFIDENCE');
 
-      // Date Resolution: Earliest valid date, or null if unknown (NEVER fake today's date)
       const suggestedDate = dates.length > 0 ? dates[0] : null;
       const dateStatus = hasVerifiedDates ? 'verified' : (dates.length > 0 ? 'inferred' : 'unknown');
 
-      // Location Resolution: Verified GPS / metadata or null (NEVER fake "Squad Hangout")
       const gpsFile = cluster.find(f => f.gps);
       let suggestedLocation = null;
       let locationStatus = 'unknown';
-
       if (gpsFile && gpsFile.gps) {
         suggestedLocation = `${gpsFile.gps.latitude.toFixed(3)}°, ${gpsFile.gps.longitude.toFixed(3)}°`;
         locationStatus = 'verified';
-      } else if (cluster.find(f => f.locationName)) {
-        suggestedLocation = cluster.find(f => f.locationName).locationName;
-        locationStatus = 'inferred';
       }
 
-      const suggestedTitle = suggestMemoryTitle(cluster);
+      // Recommend Best Cover Photographs
+      const coverCandidates = selectBestCoverCandidates(cluster);
+      const primaryCover = coverCandidates[0]?.file || cluster[0];
+
+      // Separate recommended picks vs secondary review
+      const recommendedFiles = cluster.filter(f => f.classification?.category === 'KEEP');
+      const reviewFiles = cluster.filter(f => f.classification?.category === 'REVIEW');
+
+      const suggestedTitle = suggestMemoryTitle(cluster, cluster[0].visionAnalysis?.scene);
 
       suggestedNew.push({
         id: `new-group-${Date.now()}-${idx}`,
         type: 'suggest_new',
         suggestedTitle,
         suggestedDate,
-        dateStatus, // 'verified' | 'inferred' | 'unknown'
+        dateStatus,
         suggestedLocation,
-        locationStatus, // 'verified' | 'inferred' | 'unknown'
+        locationStatus,
         suggestedCategory: 'coll-keepsakes',
         suggestedMood: 'happy',
         files: cluster,
+        recommendedFiles: recommendedFiles.length > 0 ? recommendedFiles : cluster,
+        reviewFiles,
+        coverCandidates,
+        selectedCoverId: primaryCover.id,
         confidence,
         confidenceLevel,
         reasons,
       });
     } else {
-      // Single isolated file without clustering signals
       unorganized.push(...cluster);
     }
   });
 
+  // Calculate high-level overview metrics
+  const recommendedCount = unassignedFiles.filter(f => f.classification?.category === 'KEEP').length;
+  const reviewCount = unassignedFiles.filter(f => f.classification?.category === 'REVIEW').length;
+  const excludedCount = unassignedFiles.filter(f => f.classification?.category === 'EXCLUDE').length;
+
+  onProgress?.({ stage: 'Curation complete', percent: 100 });
+
   return {
     matchExisting,
     suggestedNew,
+    archiveGroup: {
+      title: 'Archive & Documents',
+      description: 'Tickets, receipts, documents, and screenshots retained safely in your personal vault.',
+      files: archiveFiles,
+    },
+    duplicateGroup: {
+      exact: exactGroups,
+      near: nearGroups,
+      totalCount: duplicateResults.totalExactDuplicates + duplicateResults.totalNearDuplicates,
+    },
+    burstGroup: {
+      bursts: burstGroups,
+      totalCount: duplicateResults.totalBurstSequences,
+    },
     unorganized,
-    totalAnalyzed: unassignedFiles.length,
+    overview: {
+      totalAnalyzed: totalFiles,
+      recommendedCount,
+      reviewCount,
+      archiveCount: archiveFiles.length,
+      exactDuplicateCount: duplicateResults.totalExactDuplicates,
+      nearDuplicateCount: duplicateResults.totalNearDuplicates,
+      burstCount: duplicateResults.totalBurstSequences,
+      excludedCount,
+      unorganizedCount: unorganized.length,
+      suggestedMemoriesCount: suggestedNew.length,
+      existingMatchesCount: matchExisting.length,
+    },
   };
 }

@@ -21,6 +21,7 @@ export default function MediaThumbnail({
   className = '',
   showFilename = false,
   showBadges = true,
+  curationBadge = null, // e.g. { label: 'Recommended', color: 'green' | 'yellow' | 'grey' | 'red' | 'gold' }
 }) {
   const [hasError, setHasError] = useState(false);
   const [resolvedSrc, setResolvedSrc] = useState(null);
@@ -152,6 +153,23 @@ export default function MediaThumbnail({
         {item?.isHeic && showBadges && (
           <div className="absolute bottom-1.5 right-1.5 px-1 py-0.5 rounded bg-black/75 backdrop-blur-sm text-[8px] font-bold text-zinc-300 border border-white/10 pointer-events-none uppercase">
             HEIC
+          </div>
+        )}
+
+        {/* Curation Status Badge */}
+        {curationBadge && showBadges && (
+          <div className={`absolute top-1.5 ${selectable ? 'left-8' : 'left-1.5'} px-1.5 py-0.5 rounded-md text-[9px] font-bold tracking-wider uppercase border shadow-md pointer-events-none ${
+            curationBadge.color === 'green'
+              ? 'bg-emerald-500/90 text-zinc-950 border-emerald-400'
+              : curationBadge.color === 'yellow'
+              ? 'bg-amber-500/90 text-zinc-950 border-amber-400'
+              : curationBadge.color === 'red'
+              ? 'bg-red-500/90 text-white border-red-400'
+              : curationBadge.color === 'gold'
+              ? 'bg-amber-400 text-zinc-950 border-yellow-200'
+              : 'bg-zinc-800/90 text-zinc-300 border-zinc-600'
+          }`}>
+            {curationBadge.label}
           </div>
         )}
 
