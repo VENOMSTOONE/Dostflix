@@ -160,12 +160,12 @@ export default function Details() {
               onClick={() => toggleFavorite(memory.id)}
               className={`flex items-center justify-center gap-2 w-full py-3 rounded-lg border transition-colors ${
                 isFavorite
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-500 hover:bg-rose-500/20'
+                  ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/25'
                   : 'border-white/15 text-white hover:bg-white/5'
               }`}
             >
               <Heart size={18} fill={isFavorite ? "currentColor" : "none"} />
-              <span>{isFavorite ? 'Removed from Favs' : 'Add to Favorites'}</span>
+              <span>{isFavorite ? 'Saved in Favorites' : 'Add to Favorites'}</span>
             </button>
           </div>
         </div>

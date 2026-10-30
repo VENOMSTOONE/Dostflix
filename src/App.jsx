@@ -11,39 +11,44 @@ import Timeline from './pages/Timeline';
 import MapView from './pages/MapView';
 import Developer from './pages/Developer';
 import Keepsakes from './pages/Keepsakes';
+import Jukebox from './pages/Jukebox';
+import ScrollToTop from './components/layout/ScrollToTop';
 import useKonamiCode from './hooks/useKonamiCode';
 import DeveloperBanner from './components/ui/DeveloperBanner';
 import IntroLoader from './components/ui/IntroLoader';
 import { AudioProvider } from './context/AudioContext';
 import MusicPlayer from './components/ui/MusicPlayer';
+import LoungeMode from './components/ui/LoungeMode';
 import { MemoryProvider } from './context/MemoryContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 function AppLayout() {
   const isUnlocked = useKonamiCode();
   const [showBanner, setShowBanner] = React.useState(true);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoungeOpen, setIsLoungeOpen] = useState(false);
   const location = useLocation();
 
   const isProfilePage = location.pathname === '/';
 
-  React.useEffect(() => {
-    const root = document.documentElement;
-    root.style.setProperty('--accent', '#e50914');
-    root.style.setProperty('--background', '#09090b');
-    root.style.setProperty('--surface', '#18181b');
+  const handleFinishIntro = React.useCallback(() => {
+    setIsLoading(false);
   }, []);
 
   if (isLoading) {
-    return <IntroLoader onFinish={() => setIsLoading(false)} />;
+    return <IntroLoader onFinish={handleFinishIntro} />;
   }
 
   return (
     <div className="flex flex-col min-h-screen">
+      <ScrollToTop />
       {isUnlocked && showBanner && <DeveloperBanner onDismiss={() => setShowBanner(false)} />}
 
-      {!isProfilePage && <Navbar />}
+      {!isProfilePage && <Navbar onOpenLounge={() => setIsLoungeOpen(true)} />}
 
       <MusicPlayer />
+
+      <LoungeMode isOpen={isLoungeOpen} onClose={() => setIsLoungeOpen(false)} />
 
       <main className={`flex-grow flex flex-col ${!isProfilePage ? 'pt-20' : ''}`}>
         <Routes>
@@ -56,23 +61,26 @@ function AppLayout() {
           <Route path="/stats" element={<Stats />} />
           <Route path="/developer" element={<Developer />} />
           <Route path="/keepsakes" element={<Keepsakes />} />
+          <Route path="/jukebox" element={<Jukebox />} />
         </Routes>
       </main>
 
-      {!isProfilePage && <Footer />}
+      {!isProfilePage && <Footer onOpenLounge={() => setIsLoungeOpen(true)} />}
     </div>
   );
 }
 
 function App() {
   return (
-    <MemoryProvider>
-      <AudioProvider>
-        <Router>
-          <AppLayout />
-        </Router>
-      </AudioProvider>
-    </MemoryProvider>
+    <ThemeProvider>
+      <MemoryProvider>
+        <AudioProvider>
+          <Router>
+            <AppLayout />
+          </Router>
+        </AudioProvider>
+      </MemoryProvider>
+    </ThemeProvider>
   );
 }
 

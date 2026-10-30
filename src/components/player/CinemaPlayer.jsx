@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Play, Pause, Volume2, VolumeX, Maximize2, Minimize2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import soundFx from '../../utils/soundFx';
 
 export default function CinemaPlayer({ isOpen, onClose, mediaAsset, memoryId }) {
   const [isPlaying, setIsPlaying] = useState(true);
@@ -9,6 +10,12 @@ export default function CinemaPlayer({ isOpen, onClose, mediaAsset, memoryId }) 
   const [progress, setProgress] = useState(0);
   const videoRef = useRef(null);
   const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      soundFx.playTudum();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen && videoRef.current) {
@@ -58,6 +65,7 @@ export default function CinemaPlayer({ isOpen, onClose, mediaAsset, memoryId }) 
   const isVideo = mediaAsset?.endsWith('.mp4');
 
   const togglePlay = () => {
+    soundFx.playClick();
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
@@ -69,6 +77,7 @@ export default function CinemaPlayer({ isOpen, onClose, mediaAsset, memoryId }) 
   };
 
   const toggleMute = () => {
+    soundFx.playClick();
     if (videoRef.current) {
       videoRef.current.muted = !isMuted;
       setIsMuted(!isMuted);
@@ -76,6 +85,7 @@ export default function CinemaPlayer({ isOpen, onClose, mediaAsset, memoryId }) 
   };
 
   const toggleFullscreen = () => {
+    soundFx.playPop();
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
       containerRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(err => console.log(err));
@@ -120,7 +130,10 @@ export default function CinemaPlayer({ isOpen, onClose, mediaAsset, memoryId }) 
           </span>
         </div>
         <button
-          onClick={onClose}
+          onClick={() => {
+            soundFx.playClick();
+            onClose();
+          }}
           className="p-3 bg-white/10 text-white rounded-full hover:bg-white/20 transition-all active:scale-95"
         >
           <X size={20} />
