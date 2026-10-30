@@ -1,9 +1,10 @@
 // Media Processor for Dostflix Memory Studio
 // Handles hashing, robust thumbnail generation, video poster capture, and controlled concurrency.
 
-import { extractFileMetadata, isHeicFile } from './exifReader';
-import { findMediaByHash, saveMediaFile, createBlobUrl } from './indexedDbStorage';
-import { analyzeImageQualityAndContent, sampleVideoKeyframes } from './visualAnalysisEngine';
+import { extractFileMetadata, isHeicFile } from './exifReader.js';
+import { findMediaByHash, saveMediaFile, createBlobUrl } from './indexedDbStorage.js';
+import { analyzeImageQualityAndContent, sampleVideoKeyframes } from './visualAnalysisEngine.js';
+import { generateImageFingerprint, computeSha256 } from './imageFingerprint.js';
 
 // Lazy loader for modern heic-decode with libheif-js
 let heicDecodePromise = null;
@@ -359,7 +360,20 @@ export async function processFileItem(file, onProgress) {
   const isImage = isHeic || file.type.startsWith('image/') || Boolean(file.name.match(/\.(jpe?g|png|webp|heic|heif|gif|svg)$/i));
 
   onProgress?.({ stage: 'hashing', percent: 15 });
-  const hash = await computeFileHash(file);
+  let hash = null;
+  let fingerprint = null;
+
+  if (isImage) {
+    try {
+      fingerprint = await generateImageFingerprint(file);
+      hash = fingerprint.sha256;
+    } catch (err) {
+      console.warn('Fingerprint computation failed, fallback to SHA-256:', err);
+      hash = await computeSha256(file);
+    }
+  } else {
+    hash = await computeSha256(file);
+  }
 
   // Check for duplicates in local store
   const existingWithHash = await findMediaByHash(hash);
@@ -386,7 +400,7 @@ export async function processFileItem(file, onProgress) {
     onProgress?.({ stage: 'thumbnail', percent: 75 });
     convertedBlob = conversionResult.jpegBlob;
     visualInfo = {
-      thumbnail: conversionResult.thumbnail,
+      thumbnail: fingerprint?.thumbnailUrl || conversionResult.thumbnail,
       width: conversionResult.width,
       height: conversionResult.height,
       duration: 0,
@@ -394,7 +408,17 @@ export async function processFileItem(file, onProgress) {
     };
   } else if (isImage) {
     onProgress?.({ stage: 'thumbnail', percent: 70 });
-    visualInfo = await generateImageThumbnail(file);
+    if (fingerprint?.thumbnailUrl && fingerprint.width > 0) {
+      visualInfo = {
+        thumbnail: fingerprint.thumbnailUrl,
+        width: fingerprint.width,
+        height: fingerprint.height,
+        duration: 0,
+        isUnsupportedPreview: false,
+      };
+    } else {
+      visualInfo = await generateImageThumbnail(file);
+    }
   } else if (isVideo) {
     onProgress?.({ stage: 'thumbnail', percent: 70 });
     visualInfo = await generateVideoPoster(file);
@@ -403,11 +427,26 @@ export async function processFileItem(file, onProgress) {
   // Visual Quality & Perceptual Hash Analysis (Fast, lightweight execution)
   onProgress?.({ stage: 'visual_analysis', percent: 80 });
   let visualMetrics = null;
-  if (isImage && visualInfo.thumbnail) {
+  if (isImage && fingerprint) {
+    const sharpnessScore = Math.min(100, Math.round(Math.sqrt(fingerprint.sharpness || 50) * 4));
+    visualMetrics = {
+      pHash: fingerprint.pHash,
+      sharpnessScore,
+      laplacianVariance: fingerprint.sharpness || 50,
+      isBlurry: (fingerprint.sharpness || 50) < 35,
+      exposureScore: 80,
+      qualityScore: Math.min(100, Math.round(sharpnessScore * 0.4 + 50)),
+      megapixels: ((fingerprint.width * fingerprint.height) / 1000000).toFixed(2),
+      aspectRatio: fingerprint.aspectRatio,
+    };
+  } else if (isImage && visualInfo.thumbnail) {
     try {
       const img = new Image();
-      img.src = visualInfo.thumbnail;
-      await new Promise((res) => { img.onload = res; img.onerror = res; });
+      await new Promise((res) => {
+        img.onload = res;
+        img.onerror = res;
+        img.src = visualInfo.thumbnail;
+      });
       visualMetrics = await analyzeImageQualityAndContent(img, visualInfo.width, visualInfo.height);
     } catch (e) {
       console.warn('Fast visual analysis skipped:', e);
@@ -434,6 +473,7 @@ export async function processFileItem(file, onProgress) {
     mediaType: isVideo ? 'video' : 'image',
     fileSize: file.size,
     hash,
+    fingerprint,
     isDuplicate,
     duplicateOfId: isDuplicate ? existingWithHash[0].id : null,
     visualMetrics: visualMetrics || null,

@@ -125,7 +125,7 @@ export default function MemoryStudio() {
       setIsAnalyzing(true);
       setAnalysisProgress({ stage: 'Analyzing image clarity & visual hashes...', percent: 15 });
 
-      const results = await analyzeAndOrganizeBatch(filesToAnalyze, memories, (prog) => {
+      const results = await analyzeAndOrganizeBatch(filesToAnalyze, memories, allMediaFiles, (prog) => {
         setAnalysisProgress(prog);
       });
 

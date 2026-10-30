@@ -31,6 +31,35 @@ import soundFx from '../../utils/soundFx';
 import MediaThumbnail from './MediaThumbnail';
 import MediaLightbox from './MediaLightbox';
 
+// Format byte size for metadata badges
+const formatBytes = (bytes) => {
+  if (!bytes || isNaN(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Extract dimensions string (e.g., "4032×3024")
+const getDimensionsStr = (item) => {
+  const w = item?.metadata?.width || item?.dimensions?.width;
+  const h = item?.metadata?.height || item?.dimensions?.height;
+  return w && h ? `${w}×${h}` : null;
+};
+
+// Extract uppercase format string (e.g., "HEIC", "JPG")
+const getFormatStr = (item) => {
+  if (item?.metadata?.format) return item.metadata.format.toUpperCase();
+  if (item?.fileBlob?.type) {
+    const ext = item.fileBlob.type.split('/')[1];
+    return ext ? ext.toUpperCase() : '';
+  }
+  if (item?.filename) {
+    const parts = item.filename.split('.');
+    if (parts.length > 1) return parts[parts.length - 1].toUpperCase();
+  }
+  return '';
+};
+
 export default function OrganizationReviewModal({
   isOpen = false,
   analysisResults = { 
@@ -111,19 +140,269 @@ export default function OrganizationReviewModal({
 
   if (!isOpen) return null;
 
-  // Overview counts
-  const overview = analysisResults.overview || {};
-  const totalAnalyzed = overview.totalAnalyzed || 0;
-  const recommendedCount = overview.recommendedCount || 0;
-  const reviewCount = overview.reviewCount || 0;
-  const duplicateCount = overview.exactDuplicateCount + overview.nearDuplicateCount || 0;
-  const burstCount = overview.burstCount || 0;
+  // Dynamic Overview counts derived from active state
+  const totalAnalyzed = analysisResults.overview?.totalAnalyzed || 0;
+  const exactCount = duplicateGroups.exact?.reduce((acc, g) => acc + (g.duplicates?.length || 0), 0) || 0;
+  const nearCount = duplicateGroups.near?.reduce((acc, g) => acc + (g.duplicates?.length || 0), 0) || 0;
+  const duplicateCount = exactCount + nearCount;
+  const burstCount = burstGroups.length;
+  const recommendedCount = newGroups.reduce((acc, g) => acc + (g.recommendedFiles?.length || 0), 0) + matches.reduce((acc, m) => acc + m.files.length, 0);
+  const reviewCount = newGroups.reduce((acc, g) => acc + (g.reviewFiles?.length || 0), 0);
 
   // Open lightbox
   const handleOpenLightbox = (itemList, index = 0) => {
     setLightboxItems(itemList);
     setLightboxIndex(index);
     setIsLightboxOpen(true);
+  };
+
+  // Check if an item is currently classified as KEEP in any recommended memory group
+  const isItemIncluded = (fileId) => {
+    return newGroups.some((g) => g.recommendedFiles?.some((f) => f.id === fileId));
+  };
+
+  // Switch canonical representative in duplicate group
+  const handleSetCanonical = (groupType, groupId, newCanonical) => {
+    soundFx.playPop();
+    const listKey = groupType === 'exact' ? 'exact' : 'near';
+    setDuplicateGroups((prev) => {
+      const updatedList = (prev[listKey] || []).map((g) => {
+        if (g.id === groupId) {
+          const newDuplicates = g.allFiles.filter((f) => f.id !== newCanonical.id);
+          return {
+            ...g,
+            canonical: newCanonical,
+            duplicates: newDuplicates,
+          };
+        }
+        return g;
+      });
+      return { ...prev, [listKey]: updatedList };
+    });
+
+    // In newGroups, make newCanonical KEEP, and ensure old duplicates stay in their respective states
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const hasNewCanonical = g.files.some((f) => f.id === newCanonical.id);
+        if (!hasNewCanonical) return g;
+        const updatedFiles = g.files.map((f) => {
+          if (f.id === newCanonical.id) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: 'KEEP',
+                badgeColor: 'green',
+                badgeLabel: 'Recommended',
+                reason: 'Selected as primary representative.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
+  };
+
+  // Keep Recommended: canonical remains KEEP, duplicates marked EXCLUDED
+  const handleKeepRecommended = (group) => {
+    soundFx.playPop();
+    const dupIds = new Set(group.duplicates.map((f) => f.id));
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const updatedFiles = g.files.map((f) => {
+          if (f.id === group.canonical.id) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: 'KEEP',
+                badgeColor: 'green',
+                badgeLabel: 'Recommended',
+                reason: 'Primary representative preserved.',
+              },
+            };
+          }
+          if (dupIds.has(f.id)) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: 'EXCLUDED',
+                badgeColor: 'red',
+                badgeLabel: 'Duplicate',
+                reason: 'Duplicate copy filtered from presentation.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
+  };
+
+  // Toggle duplicate copy inclusion
+  const handleToggleDuplicateInclusion = (duplicateItem) => {
+    soundFx.playClick();
+    const isCurrentlyIncluded = isItemIncluded(duplicateItem.id);
+    const newCategory = isCurrentlyIncluded ? 'EXCLUDED' : 'KEEP';
+
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const hasFile = g.files.some((f) => f.id === duplicateItem.id);
+        if (!hasFile) return g;
+        const updatedFiles = g.files.map((f) => {
+          if (f.id === duplicateItem.id) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: newCategory,
+                badgeColor: newCategory === 'KEEP' ? 'green' : 'red',
+                badgeLabel: newCategory === 'KEEP' ? 'Recommended' : 'Duplicate',
+                reason: newCategory === 'KEEP' ? 'User included duplicate copy in memory.' : 'Duplicate copy filtered from presentation.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
+  };
+
+  // Keep all duplicates in group as recommended
+  const handleKeepAllDuplicates = (group) => {
+    soundFx.playPop();
+    const allIds = new Set(group.allFiles.map((f) => f.id));
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const updatedFiles = g.files.map((f) => {
+          if (allIds.has(f.id)) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: 'KEEP',
+                badgeColor: 'green',
+                badgeLabel: 'Recommended',
+                reason: 'User included all duplicates in memory.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
+  };
+
+  // Keep recommended burst frames only
+  const handleKeepRecommendedBurst = (burst) => {
+    soundFx.playPop();
+    const recIds = new Set(burst.recommended.map((f) => f.id));
+    const allBurstIds = new Set(burst.allFiles.map((f) => f.id));
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const updatedFiles = g.files.map((f) => {
+          if (allBurstIds.has(f.id)) {
+            const isRec = recIds.has(f.id);
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: isRec ? 'KEEP' : 'EXCLUDED',
+                badgeColor: isRec ? 'green' : 'red',
+                badgeLabel: isRec ? 'Recommended' : 'Burst Duplicate',
+                reason: isRec ? 'Top burst pick preserved.' : 'Burst frame excluded to reduce clutter.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
+  };
+
+  // Toggle individual burst frame inclusion
+  const handleToggleBurstFrame = (burstId, file) => {
+    soundFx.playClick();
+    const isCurrentlyRec = isItemIncluded(file.id);
+    const newCategory = isCurrentlyRec ? 'EXCLUDED' : 'KEEP';
+
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const hasFile = g.files.some((f) => f.id === file.id);
+        if (!hasFile) return g;
+        const updatedFiles = g.files.map((f) => {
+          if (f.id === file.id) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: newCategory,
+                badgeColor: newCategory === 'KEEP' ? 'green' : 'red',
+                badgeLabel: newCategory === 'KEEP' ? 'Recommended' : 'Burst Duplicate',
+                reason: newCategory === 'KEEP' ? 'User included burst frame.' : 'User excluded burst frame.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
+  };
+
+  // Keep all frames in a burst sequence
+  const handleKeepAllBurstFrames = (burstId) => {
+    soundFx.playPop();
+    const burst = burstGroups.find((b) => b.id === burstId);
+    if (!burst) return;
+
+    setBurstGroups((prev) =>
+      prev.map((b) => (b.id === burstId ? { ...b, recommended: b.allFiles, secondary: [] } : b))
+    );
+
+    // Update all burst photos in newGroups to KEEP
+    const burstIds = new Set(burst.allFiles.map((f) => f.id));
+    setNewGroups((prev) =>
+      prev.map((g) => {
+        const updatedFiles = g.files.map((f) => {
+          if (burstIds.has(f.id)) {
+            return {
+              ...f,
+              classification: {
+                ...f.classification,
+                category: 'KEEP',
+                badgeColor: 'green',
+                badgeLabel: 'Recommended',
+                reason: 'User approved all frames from burst sequence.',
+              },
+            };
+          }
+          return f;
+        });
+        const rec = updatedFiles.filter((f) => f.classification?.category === 'KEEP');
+        const rev = updatedFiles.filter((f) => f.classification?.category === 'REVIEW');
+        return { ...g, files: updatedFiles, recommendedFiles: rec, reviewFiles: rev };
+      })
+    );
   };
 
   // Toggle group expansion
@@ -767,95 +1046,454 @@ export default function OrganizationReviewModal({
           {/* TAB 2: DUPLICATES & BURST SEQUENCES                            */}
           {/* ============================================================== */}
           {activeTab === 'duplicates' && (
-            <div className="space-y-6">
-              <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 flex items-center gap-2">
-                <Info size={16} className="text-purple-400 shrink-0" />
-                <span>
-                  Duplicates and rapid camera bursts are automatically filtered so your memories remain clean and diverse. Original files always remain in your archive.
-                </span>
+            <div className="space-y-8">
+              <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-purple-500/20 text-purple-300 shrink-0">
+                    <Copy size={18} />
+                  </div>
+                  <div>
+                    <span className="font-bold text-white block">Intelligent Duplicate & Burst Curation</span>
+                    <span>
+                      Exact duplicates, visual near-duplicates, and rapid camera bursts are automatically filtered so your memories remain clean and diverse. Original files always remain safe in your vault.
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              {/* Exact Duplicates */}
+              {/* SECTION 1: EXACT DUPLICATES */}
               {duplicateGroups.exact?.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                    <Copy size={16} className="text-purple-400" />
-                    Exact Duplicates ({duplicateGroups.exact.length} pairs):
-                  </h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Copy size={16} className="text-purple-400" />
+                      Exact Duplicates ({duplicateGroups.exact.length} {duplicateGroups.exact.length === 1 ? 'group' : 'groups'} • {exactCount} copies filtered):
+                    </h3>
+                    <span className="text-[11px] font-semibold text-purple-400/80 bg-purple-500/10 px-2.5 py-1 rounded-full border border-purple-500/20">
+                      100% SHA-256 Byte Match
+                    </span>
+                  </div>
 
-                  <div className="space-y-3">
-                    {duplicateGroups.exact.map((group) => (
-                      <div key={group.id} className="p-4 rounded-xl bg-zinc-900 border border-white/10 space-y-3">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-white">{group.reason}</span>
-                          <span className="text-emerald-400 font-bold">1 Recommended Representative</span>
-                        </div>
+                  <div className="space-y-4">
+                    {duplicateGroups.exact.map((group) => {
+                      const allCopiesKept = group.duplicates.every((d) => isItemIncluded(d.id));
+                      return (
+                        <div key={group.id} className="p-5 rounded-2xl bg-zinc-900/90 border border-white/10 space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm text-white">{group.reason}</span>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  1 Canonical Pick
+                                </span>
+                              </div>
+                              <span className="text-xs text-zinc-400 mt-0.5 block">
+                                {group.duplicates.length} duplicate {group.duplicates.length === 1 ? 'copy' : 'copies'} excluded from memory presentation
+                              </span>
+                            </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                          <div className="relative border-2 border-emerald-400 rounded-xl overflow-hidden p-1 bg-black">
-                            <span className="absolute top-2 left-2 z-10 px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-950 text-[9px] font-black uppercase">
-                              Primary
-                            </span>
-                            <MediaThumbnail item={group.canonical} showFilename={true} />
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleKeepRecommended(group)}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-colors"
+                              >
+                                Keep Recommended
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleKeepAllDuplicates(group)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                                  allCopiesKept
+                                    ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
+                                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-300 hover:text-white'
+                                }`}
+                              >
+                                {allCopiesKept ? 'All Copies Included' : 'Keep All Copies'}
+                              </button>
+                            </div>
                           </div>
 
-                          {group.duplicates.map((dup) => (
-                            <div key={dup.id} className="relative opacity-60 hover:opacity-100 transition-opacity">
-                              <span className="absolute top-2 left-2 z-10 px-1.5 py-0.5 rounded bg-red-500/90 text-white text-[9px] font-black uppercase">
-                                Duplicate Copy
-                              </span>
-                              <MediaThumbnail item={dup} showFilename={true} />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Burst Sequences */}
-              {burstGroups.length > 0 && (
-                <div className="space-y-3 pt-4">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                    <Zap size={16} className="text-blue-400" />
-                    Burst Sequences ({burstGroups.length} sequences):
-                  </h3>
-
-                  <div className="space-y-3">
-                    {burstGroups.map((burst) => (
-                      <div key={burst.id} className="p-4 rounded-xl bg-zinc-900 border border-white/10 space-y-3">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                          <span className="font-semibold text-white">{burst.reason}</span>
-                          <span className="text-amber-400 text-[11px] font-bold">Top {burst.recommended.length} frames recommended</span>
-                        </div>
-
-                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                          {burst.allFiles.map((file) => {
-                            const isRec = burst.recommended.some(r => r.id === file.id);
-                            return (
-                              <div key={file.id} className={`relative rounded-xl overflow-hidden ${isRec ? 'border-2 border-amber-400 p-0.5' : 'opacity-70'}`}>
-                                {isRec && (
-                                  <span className="absolute top-2 left-2 z-10 px-1.5 py-0.5 rounded bg-amber-400 text-zinc-950 text-[9px] font-black uppercase flex items-center gap-1">
-                                    <Award size={10} /> Top Pick
-                                  </span>
-                                )}
-                                <MediaThumbnail item={file} showFilename={true} />
+                          {/* Side-by-Side Comparison Grid */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                            {/* Canonical Primary Representative */}
+                            <div className="p-3 rounded-xl border-2 border-emerald-500/50 bg-emerald-500/[0.04] space-y-2 relative">
+                              <div className="flex items-center justify-between">
+                                <span className="px-2 py-0.5 rounded bg-emerald-500 text-zinc-950 text-[10px] font-black uppercase tracking-wide">
+                                  Primary Pick
+                                </span>
+                                <span className="text-[10px] font-medium text-emerald-400">
+                                  {group.canonical.isInExistingLibrary ? 'In Vault' : 'New Upload'}
+                                </span>
                               </div>
-                            );
-                          })}
+
+                              <div className="aspect-square rounded-lg overflow-hidden relative cursor-pointer" onClick={() => handleOpenLightbox(group.allFiles, 0)}>
+                                <MediaThumbnail item={group.canonical} showFilename={false} />
+                              </div>
+
+                              <div className="space-y-1 text-[11px] text-zinc-400 pt-1">
+                                <p className="font-semibold text-white truncate" title={group.canonical.filename}>
+                                  {group.canonical.filename}
+                                </p>
+                                <div className="grid grid-cols-2 gap-x-2 text-[10px] text-zinc-500">
+                                  <span>{getFormatStr(group.canonical)} • {formatBytes(group.canonical.fileBlob?.size || group.canonical.size)}</span>
+                                  <span className="text-right">{getDimensionsStr(group.canonical) || 'Original'}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Duplicate Copies */}
+                            {group.duplicates.map((dup, dIdx) => {
+                              const isIncluded = isItemIncluded(dup.id);
+                              return (
+                                <div
+                                  key={dup.id}
+                                  className={`p-3 rounded-xl border space-y-2 transition-all relative ${
+                                    isIncluded
+                                      ? 'border-emerald-500/30 bg-emerald-500/[0.02]'
+                                      : 'border-white/10 bg-zinc-900/60 opacity-80 hover:opacity-100'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                      isIncluded ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                    }`}>
+                                      {isIncluded ? 'Restored to Memory' : 'Duplicate Copy'}
+                                    </span>
+                                    <span className="text-[10px] font-medium text-zinc-500">
+                                      {dup.isInExistingLibrary ? 'In Vault' : 'New Upload'}
+                                    </span>
+                                  </div>
+
+                                  <div className="aspect-square rounded-lg overflow-hidden relative cursor-pointer" onClick={() => handleOpenLightbox(group.allFiles, dIdx + 1)}>
+                                    <MediaThumbnail item={dup} showFilename={false} />
+                                  </div>
+
+                                  <div className="space-y-1 text-[11px] text-zinc-400 pt-1">
+                                    <p className="font-semibold text-white truncate" title={dup.filename}>
+                                      {dup.filename}
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-x-2 text-[10px] text-zinc-500">
+                                      <span>{getFormatStr(dup)} • {formatBytes(dup.fileBlob?.size || dup.size)}</span>
+                                      <span className="text-right">{getDimensionsStr(dup) || 'Original'}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-1.5 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetCanonical('exact', group.id, dup)}
+                                      className="py-1 px-2 rounded bg-white/5 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 text-[10px] font-bold transition-colors text-center truncate"
+                                      title="Set this duplicate as primary representative"
+                                    >
+                                      Make Primary
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleDuplicateInclusion(dup)}
+                                      className={`py-1 px-2 rounded text-[10px] font-bold transition-colors text-center truncate ${
+                                        isIncluded
+                                          ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300'
+                                          : 'bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white'
+                                      }`}
+                                    >
+                                      {isIncluded ? 'Exclude' : 'Include'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
-              {duplicateGroups.exact?.length === 0 && burstGroups.length === 0 && (
-                <div className="py-12 text-center text-zinc-500">
-                  <p>No duplicates or burst sequences detected in this batch.</p>
+              {/* SECTION 2: VISUAL NEAR-DUPLICATES */}
+              {duplicateGroups.near?.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Layers size={16} className="text-indigo-400" />
+                      Visual Near-Duplicates ({duplicateGroups.near.length} {duplicateGroups.near.length === 1 ? 'group' : 'groups'} • {nearCount} variations):
+                    </h3>
+                    <span className="text-[11px] font-semibold text-indigo-400/80 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20">
+                      Perceptual Hash & SSIM Verified
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {duplicateGroups.near.map((group) => {
+                      const allCopiesKept = group.duplicates.every((d) => isItemIncluded(d.id));
+                      return (
+                        <div key={group.id} className="p-5 rounded-2xl bg-zinc-900/90 border border-white/10 space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm text-white">{group.reason}</span>
+                                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                  {group.similarity}% Visual Match
+                                </span>
+                              </div>
+                              <span className="text-xs text-zinc-400 mt-0.5 block">
+                                Highest resolution / sharpest representation chosen as canonical pick.
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleKeepRecommended(group)}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-colors"
+                              >
+                                Keep Recommended
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleKeepAllDuplicates(group)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                                  allCopiesKept
+                                    ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
+                                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-300 hover:text-white'
+                                }`}
+                              >
+                                {allCopiesKept ? 'All Copies Included' : 'Keep All Copies'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Side-by-Side Comparison Grid */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                            {/* Canonical Representative */}
+                            <div className="p-3 rounded-xl border-2 border-emerald-500/50 bg-emerald-500/[0.04] space-y-2 relative">
+                              <div className="flex items-center justify-between">
+                                <span className="px-2 py-0.5 rounded bg-emerald-500 text-zinc-950 text-[10px] font-black uppercase tracking-wide">
+                                  Primary Pick
+                                </span>
+                                <span className="text-[10px] font-medium text-emerald-400">
+                                  {group.canonical.isInExistingLibrary ? 'In Vault' : 'New Upload'}
+                                </span>
+                              </div>
+
+                              <div className="aspect-square rounded-lg overflow-hidden relative cursor-pointer" onClick={() => handleOpenLightbox(group.allFiles, 0)}>
+                                <MediaThumbnail item={group.canonical} showFilename={false} />
+                              </div>
+
+                              <div className="space-y-1 text-[11px] text-zinc-400 pt-1">
+                                <p className="font-semibold text-white truncate" title={group.canonical.filename}>
+                                  {group.canonical.filename}
+                                </p>
+                                <div className="grid grid-cols-2 gap-x-2 text-[10px] text-zinc-500">
+                                  <span>{getFormatStr(group.canonical)} • {formatBytes(group.canonical.fileBlob?.size || group.canonical.size)}</span>
+                                  <span className="text-right">{getDimensionsStr(group.canonical) || 'Original'}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Near-Duplicate Copies */}
+                            {group.duplicates.map((dup, dIdx) => {
+                              const isIncluded = isItemIncluded(dup.id);
+                              return (
+                                <div
+                                  key={dup.id}
+                                  className={`p-3 rounded-xl border space-y-2 transition-all relative ${
+                                    isIncluded
+                                      ? 'border-emerald-500/30 bg-emerald-500/[0.02]'
+                                      : 'border-white/10 bg-zinc-900/60 opacity-80 hover:opacity-100'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                      isIncluded ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    }`}>
+                                      {isIncluded ? 'Restored to Memory' : 'Visual Duplicate'}
+                                    </span>
+                                    <span className="text-[10px] font-medium text-zinc-500">
+                                      {dup.isInExistingLibrary ? 'In Vault' : 'New Upload'}
+                                    </span>
+                                  </div>
+
+                                  <div className="aspect-square rounded-lg overflow-hidden relative cursor-pointer" onClick={() => handleOpenLightbox(group.allFiles, dIdx + 1)}>
+                                    <MediaThumbnail item={dup} showFilename={false} />
+                                  </div>
+
+                                  <div className="space-y-1 text-[11px] text-zinc-400 pt-1">
+                                    <p className="font-semibold text-white truncate" title={dup.filename}>
+                                      {dup.filename}
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-x-2 text-[10px] text-zinc-500">
+                                      <span>{getFormatStr(dup)} • {formatBytes(dup.fileBlob?.size || dup.size)}</span>
+                                      <span className="text-right">{getDimensionsStr(dup) || 'Original'}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-1.5 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetCanonical('near', group.id, dup)}
+                                      className="py-1 px-2 rounded bg-white/5 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 text-[10px] font-bold transition-colors text-center truncate"
+                                      title="Set this image as primary representative"
+                                    >
+                                      Make Primary
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleDuplicateInclusion(dup)}
+                                      className={`py-1 px-2 rounded text-[10px] font-bold transition-colors text-center truncate ${
+                                        isIncluded
+                                          ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300'
+                                          : 'bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white'
+                                      }`}
+                                    >
+                                      {isIncluded ? 'Exclude' : 'Include'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
+
+              {/* SECTION 3: BURST SEQUENCES */}
+              {burstGroups.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Zap size={16} className="text-amber-400" />
+                      Burst Sequences ({burstGroups.length} {burstGroups.length === 1 ? 'sequence' : 'sequences'}):
+                    </h3>
+                    <span className="text-[11px] font-semibold text-amber-400/80 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
+                      Rapid Shutter Shots
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {burstGroups.map((burst) => {
+                      const allBurstKept = burst.allFiles.every((f) => isItemIncluded(f.id));
+                      return (
+                        <div key={burst.id} className="p-5 rounded-2xl bg-zinc-900/90 border border-white/10 space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/5">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm text-white">{burst.reason}</span>
+                                <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  Top {burst.recommended.length} Sharpest Frames Recommended
+                                </span>
+                              </div>
+                              <span className="text-xs text-zinc-400 mt-0.5 block">
+                                Captured in rapid succession ({burst.timespanSeconds}s window). Curated to avoid redundant poses.
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleKeepRecommendedBurst(burst)}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-colors"
+                              >
+                                Keep Top Picks
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleKeepAllBurstFrames(burst.id)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                                  allBurstKept
+                                    ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+                                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-300 hover:text-white'
+                                }`}
+                              >
+                                {allBurstKept ? 'All Frames Included' : 'Keep All Frames'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Burst Frames Grid */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                            {burst.allFiles.map((file, fIdx) => {
+                              const isRec = burst.recommended.some((r) => r.id === file.id);
+                              const isIncluded = isItemIncluded(file.id);
+                              return (
+                                <div
+                                  key={file.id}
+                                  className={`p-2 rounded-xl border space-y-2 transition-all relative ${
+                                    isRec
+                                      ? 'border-amber-500/50 bg-amber-500/[0.04]'
+                                      : (isIncluded ? 'border-emerald-500/30 bg-emerald-500/[0.02]' : 'border-white/10 bg-zinc-900/60 opacity-70 hover:opacity-100')
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    {isRec ? (
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-400 text-zinc-950 text-[9px] font-black uppercase flex items-center gap-1">
+                                        <Award size={9} /> Top Pick
+                                      </span>
+                                    ) : (
+                                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                        isIncluded ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'
+                                      }`}>
+                                        {isIncluded ? 'Included' : 'Frame'}
+                                      </span>
+                                    )}
+                                    <span className="text-[9px] font-mono text-zinc-500">#{fIdx + 1}</span>
+                                  </div>
+
+                                  <div
+                                    className="aspect-square rounded-lg overflow-hidden relative cursor-pointer"
+                                    onClick={() => handleOpenLightbox(burst.allFiles, fIdx)}
+                                  >
+                                    <MediaThumbnail item={file} showFilename={false} />
+                                  </div>
+
+                                  <div className="text-[10px] text-zinc-400 space-y-0.5">
+                                    <p className="font-semibold text-white truncate" title={file.filename}>
+                                      {file.filename}
+                                    </p>
+                                    <div className="flex items-center justify-between text-[9px] text-zinc-500">
+                                      <span>{getFormatStr(file)}</span>
+                                      <span>{formatBytes(file.fileBlob?.size || file.size)}</span>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleBurstFrame(burst.id, file)}
+                                    className={`w-full py-1 px-1.5 rounded text-[10px] font-bold transition-colors text-center ${
+                                      isIncluded
+                                        ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300'
+                                        : 'bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white'
+                                    }`}
+                                  >
+                                    {isIncluded ? 'Exclude' : 'Include'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* EMPTY STATE */}
+              {(!duplicateGroups.exact || duplicateGroups.exact.length === 0) &&
+                (!duplicateGroups.near || duplicateGroups.near.length === 0) &&
+                (!burstGroups || burstGroups.length === 0) && (
+                  <div className="py-16 text-center text-zinc-500 space-y-2">
+                    <CheckCircle2 size={32} className="mx-auto text-emerald-500/50" />
+                    <p className="text-sm font-semibold text-zinc-400">No duplicates or burst sequences detected</p>
+                    <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+                      All uploaded media items are visually distinct and ready to be organized into memories.
+                    </p>
+                  </div>
+                )}
             </div>
           )}
 

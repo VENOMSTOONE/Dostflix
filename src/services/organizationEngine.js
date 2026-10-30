@@ -7,6 +7,12 @@ import { calculateHammingDistance, analyzeImageQualityAndContent } from './visua
 import { analyzeDuplicatesAndBursts } from './duplicateDetection.js';
 import { classifyMediaItem, selectBestCoverCandidates } from './contentClassifier.js';
 import { analyzeMediaContent } from './visionAiService.js';
+import { 
+  generateImageFingerprint, 
+  computeDctPHash, 
+  extractLuminanceVector, 
+  computeCanvasSharpness 
+} from './imageFingerprint.js';
 
 /**
  * Haversine distance in kilometers between two GPS coordinates
@@ -111,42 +117,121 @@ export function suggestMemoryTitle(files, sceneContext = null) {
 }
 
 /**
- * Ensures an image has visualMetrics (pHash, sharpness, exposure).
- * Computes them dynamically if missing from prior uploads.
+ * Ensures an image has complete fingerprint and visual metrics.
+ * Computes 64-bit DCT pHash, SHA-256, and SSIM luminance vector directly from normalized pixels.
  */
-async function ensureVisualMetrics(item) {
-  if (item.visualMetrics && item.visualMetrics.pHash) {
-    return item.visualMetrics;
+async function ensureFingerprint(item) {
+  // If item already has non-zero DCT pHash and luminance vector, return
+  if (item.fingerprint?.pHash && item.fingerprint.pHash !== '0000000000000000' && item.fingerprint?.luminanceVec) {
+    if (!item.hash) item.hash = item.fingerprint.sha256;
+    if (!item.visualMetrics) {
+      const sharpness = item.fingerprint.sharpness || 50;
+      item.visualMetrics = {
+        pHash: item.fingerprint.pHash,
+        sharpnessScore: Math.min(100, Math.round(Math.sqrt(sharpness) * 4)),
+        laplacianVariance: sharpness,
+        isBlurry: sharpness < 35,
+        exposureScore: 80,
+        qualityScore: 75,
+        megapixels: item.fingerprint.width && item.fingerprint.height ? ((item.fingerprint.width * item.fingerprint.height) / 1000000).toFixed(2) : '2.0',
+        aspectRatio: item.fingerprint.aspectRatio || 1.33,
+      };
+    }
+    return item.fingerprint;
   }
 
-  if (typeof window === 'undefined') {
-    return {
-      pHash: '0000000000000000',
-      qualityScore: 60,
-      sharpnessScore: 60,
-      exposureScore: 60,
-      isBlurry: false,
-      isBlank: false,
-    };
+  // Path A: If original fileBlob is present, generate full normalized fingerprint
+  if (item.fileBlob) {
+    try {
+      const fp = await generateImageFingerprint(item.fileBlob);
+      item.fingerprint = fp;
+      item.hash = fp.sha256;
+      const sharpness = fp.sharpness || 50;
+      const sharpnessScore = Math.min(100, Math.round(Math.sqrt(sharpness) * 4));
+      item.visualMetrics = {
+        pHash: fp.pHash,
+        sharpnessScore,
+        laplacianVariance: sharpness,
+        isBlurry: sharpness < 35,
+        exposureScore: 80,
+        qualityScore: Math.min(100, Math.round(sharpnessScore * 0.4 + 50)),
+        megapixels: ((fp.width * fp.height) / 1000000).toFixed(2),
+        aspectRatio: fp.aspectRatio,
+      };
+      return fp;
+    } catch (e) {
+      console.warn(`Fingerprint generation from fileBlob failed for "${item.originalFilename}":`, e);
+    }
   }
 
-  try {
-    const imgUrl = item.thumbnail || item.previewUrl;
-    if (!imgUrl) throw new Error('No preview URL available for visual analysis');
+  // Path B: Fallback from thumbnail or previewUrl without crossOrigin issues
+  if (typeof window !== 'undefined') {
+    const url = item.thumbnail || item.previewUrl;
+    if (url) {
+      try {
+        const img = new Image();
+        await new Promise((res, rej) => {
+          img.onload = res;
+          img.onerror = rej;
+          img.src = url; // No crossOrigin = 'anonymous' to prevent blob/data URL taint errors
+        });
 
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    await new Promise((res, rej) => {
-      img.onload = res;
-      img.onerror = rej;
-      img.src = imgUrl;
-    });
+        const maxDim = 360;
+        const w = img.naturalWidth || img.width || maxDim;
+        const h = img.naturalHeight || img.height || maxDim;
+        const canvas = document.createElement('canvas');
+        canvas.width = w > h ? maxDim : Math.max(1, Math.round((w / h) * maxDim));
+        canvas.height = h >= w ? maxDim : Math.max(1, Math.round((h / w) * maxDim));
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-    const metrics = await analyzeImageQualityAndContent(img, item.dimensions?.width, item.dimensions?.height);
-    item.visualMetrics = metrics;
-    return metrics;
-  } catch (err) {
-    return {
+        const pHash = computeDctPHash(canvas);
+        const luminanceVec = extractLuminanceVector(canvas);
+        const sharpness = computeCanvasSharpness(canvas);
+        const sharpnessScore = Math.min(100, Math.round(Math.sqrt(sharpness) * 4));
+
+        const fp = {
+          sha256: item.hash || `hash_${w}_${h}_${item.id}`,
+          pHash,
+          width: w,
+          height: h,
+          aspectRatio: h > 0 ? parseFloat((w / h).toFixed(3)) : 1.33,
+          sharpness,
+          luminanceVec,
+        };
+
+        item.fingerprint = fp;
+        if (!item.hash) item.hash = fp.sha256;
+        item.visualMetrics = {
+          pHash,
+          sharpnessScore,
+          laplacianVariance: sharpness,
+          isBlurry: sharpness < 35,
+          exposureScore: 80,
+          qualityScore: Math.min(100, Math.round(sharpnessScore * 0.4 + 50)),
+          megapixels: ((w * h) / 1000000).toFixed(2),
+          aspectRatio: fp.aspectRatio,
+        };
+        return fp;
+      } catch (err) {
+        console.warn(`Fallback image fingerprinting failed for "${item.originalFilename}":`, err);
+      }
+    }
+  }
+
+  // Path C: Neutral fallback
+  const fallbackFp = {
+    sha256: item.hash || item.id,
+    pHash: '0000000000000000',
+    width: item.dimensions?.width || 0,
+    height: item.dimensions?.height || 0,
+    aspectRatio: 1.0,
+    sharpness: 50,
+    luminanceVec: null,
+  };
+  item.fingerprint = fallbackFp;
+  if (!item.visualMetrics) {
+    item.visualMetrics = {
       pHash: '0000000000000000',
       qualityScore: 50,
       sharpnessScore: 50,
@@ -155,14 +240,29 @@ async function ensureVisualMetrics(item) {
       isBlank: false,
     };
   }
+  return fallbackFp;
 }
 
 /**
  * Comprehensive Intelligent Memory Organization & Curation Engine
  * Integrates metadata, visual content analysis, duplicate detection, burst detection,
  * quality scoring, and image recommendation.
+ * Compares current batch against both batch items and existing vault media.
  */
-export async function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = [], onProgress) {
+export async function analyzeAndOrganizeBatch(
+  uploadedMediaList, 
+  existingMemories = [], 
+  existingLibraryMedia = [], 
+  onProgress
+) {
+  let library = existingLibraryMedia;
+  let progressFn = onProgress;
+  if (typeof existingLibraryMedia === 'function') {
+    progressFn = existingLibraryMedia;
+    library = [];
+  }
+  if (!Array.isArray(library)) library = [];
+
   const matchExisting = [];
   const suggestedNew = [];
   const unorganized = [];
@@ -195,23 +295,32 @@ export async function analyzeAndOrganizeBatch(uploadedMediaList, existingMemorie
     };
   }
 
+  // Filter existing library items so unassignedFiles aren't matched against themselves in library
+  const unassignedIds = new Set(unassignedFiles.map(f => f.id));
+  const libraryCandidates = library.filter(libItem => !unassignedIds.has(libItem.id));
+
   // =========================================================================
-  // STAGE 1: VISUAL METRICS & COMPUTER VISION ANALYSIS
+  // STAGE 1: VISUAL FINGERPRINTING & PERCEPTUAL HASHING
   // =========================================================================
-  onProgress?.({ stage: 'Visual analysis & perceptual hashing', percent: 20 });
+  progressFn?.({ stage: 'Generating DCT perceptual hashes & fingerprints', percent: 20 });
   for (let i = 0; i < unassignedFiles.length; i++) {
     const item = unassignedFiles[i];
-    const metrics = await ensureVisualMetrics(item);
+    await ensureFingerprint(item);
     if (!item.visionAnalysis) {
-      item.visionAnalysis = await analyzeMediaContent(item, metrics);
+      item.visionAnalysis = await analyzeMediaContent(item, item.visualMetrics);
     }
   }
 
+  // Also ensure fingerprints on library candidates for cross-vault comparison
+  for (let i = 0; i < libraryCandidates.length; i++) {
+    await ensureFingerprint(libraryCandidates[i]);
+  }
+
   // =========================================================================
-  // STAGE 2: DUPLICATE & BURST DETECTION
+  // STAGE 2: 3-LEVEL DUPLICATE & BURST DETECTION
   // =========================================================================
-  onProgress?.({ stage: 'Detecting duplicates and burst sequences', percent: 45 });
-  const duplicateResults = analyzeDuplicatesAndBursts(unassignedFiles);
+  progressFn?.({ stage: 'Running exact & perceptual duplicate detection', percent: 45 });
+  const duplicateResults = analyzeDuplicatesAndBursts(unassignedFiles, libraryCandidates);
   const { exactGroups, nearGroups, burstGroups, itemMap } = duplicateResults;
 
   // =========================================================================
