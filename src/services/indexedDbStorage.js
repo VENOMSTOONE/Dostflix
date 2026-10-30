@@ -51,6 +51,54 @@ export function getDb() {
   return dbPromise;
 }
 
+// Active in-memory cache of Blob URLs keyed by media ID
+const activeObjectUrls = new Map();
+
+export function createBlobUrl(id, blob) {
+  if (!blob) return null;
+  if (activeObjectUrls.has(id)) {
+    return activeObjectUrls.get(id);
+  }
+  try {
+    const url = URL.createObjectURL(blob);
+    activeObjectUrls.set(id, url);
+    return url;
+  } catch (err) {
+    console.warn('Failed to create object URL for blob:', err);
+    return null;
+  }
+}
+
+export function revokeBlobUrl(id) {
+  if (activeObjectUrls.has(id)) {
+    try {
+      URL.revokeObjectURL(activeObjectUrls.get(id));
+    } catch (e) {}
+    activeObjectUrls.delete(id);
+  }
+}
+
+// Resolves the best available URL for any media item or string
+export function resolveMediaUrl(item) {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+
+  // 1. If thumbnail is a valid data URL or HTTP URL, use it
+  if (item.thumbnail && (item.thumbnail.startsWith('data:') || item.thumbnail.startsWith('http') || item.thumbnail.startsWith('/'))) {
+    return item.thumbnail;
+  }
+
+  // 2. If item has previewUrl that is valid
+  if (item.previewUrl) return item.previewUrl;
+
+  // 3. If fileBlob exists, generate/retrieve cached blob URL
+  if (item.fileBlob) {
+    return createBlobUrl(item.id, item.fileBlob);
+  }
+
+  return '';
+}
+
 // Save a processed media file
 export async function saveMediaFile(mediaItem) {
   const db = await getDb();
@@ -78,7 +126,7 @@ export async function saveMediaFilesBatch(mediaItems) {
   });
 }
 
-// Retrieve all media files
+// Retrieve all media files and attach active blob URLs
 export async function getAllMediaFiles() {
   const db = await getDb();
   return new Promise((resolve, reject) => {
@@ -86,7 +134,17 @@ export async function getAllMediaFiles() {
     const store = tx.objectStore(MEDIA_STORE);
     const request = store.getAll();
 
-    request.onsuccess = () => resolve(request.result || []);
+    request.onsuccess = () => {
+      const results = (request.result || []).map(item => {
+        // Ensure previewUrl is populated from fileBlob if thumbnail is missing
+        if (!item.thumbnail && item.fileBlob) {
+          item.previewUrl = createBlobUrl(item.id, item.fileBlob);
+          item.thumbnail = item.previewUrl;
+        }
+        return item;
+      });
+      resolve(results);
+    };
     request.onerror = (e) => reject(e.target.error);
   });
 }
@@ -135,6 +193,7 @@ export async function updateMediaFile(id, patch) {
 
 // Delete media file by ID
 export async function deleteMediaFile(id) {
+  revokeBlobUrl(id);
   const db = await getDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction([MEDIA_STORE], 'readwrite');
@@ -144,24 +203,4 @@ export async function deleteMediaFile(id) {
     request.onsuccess = () => resolve(true);
     request.onerror = (e) => reject(e.target.error);
   });
-}
-
-// Helper to convert an IndexedDB stored Blob into a usable Object URL
-const activeObjectUrls = new Map();
-
-export function createBlobUrl(id, blob) {
-  if (!blob) return null;
-  if (activeObjectUrls.has(id)) {
-    return activeObjectUrls.get(id);
-  }
-  const url = URL.createObjectURL(blob);
-  activeObjectUrls.set(id, url);
-  return url;
-}
-
-export function revokeBlobUrl(id) {
-  if (activeObjectUrls.has(id)) {
-    URL.revokeObjectURL(activeObjectUrls.get(id));
-    activeObjectUrls.delete(id);
-  }
 }

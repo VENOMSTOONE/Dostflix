@@ -17,9 +17,10 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
 import soundFx from '../../utils/soundFx';
+import MediaThumbnail from './MediaThumbnail';
 
 function formatBytes(bytes, decimals = 1) {
-  if (bytes === 0) return '0 B';
+  if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -52,24 +53,41 @@ export default function UploadQueueView({
 
   const isAllDone = totalCount > 0 && (completedCount + errorCount === totalCount);
 
+  const getStageDescription = (stage, progress) => {
+    switch (stage) {
+      case 'hashing':
+        return `Hashing & deduplication (${progress || 20}%)`;
+      case 'metadata':
+        return `Reading EXIF & timestamps (${progress || 45}%)`;
+      case 'thumbnail':
+        return `Generating preview (${progress || 70}%)`;
+      case 'storing':
+        return `Writing to local vault (${progress || 90}%)`;
+      case 'completed':
+        return 'Stored safely in local vault';
+      default:
+        return `Processing... (${progress || 0}%)`;
+    }
+  };
+
   return (
     <div className="w-full bg-zinc-950/70 border border-white/10 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl mt-8">
       {/* Top Header & Global Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/5">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className={`w-2 h-2 rounded-full ${isAllDone ? 'bg-emerald-400' : 'bg-cyan-400 animate-pulse'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full ${isAllDone ? 'bg-emerald-400' : 'bg-cyan-400 animate-pulse'}`} />
             <h4 className="text-lg font-bold text-white flex items-center gap-2">
               <span>Upload Queue</span>
               <span className="text-xs font-normal text-zinc-400">
-                ({completedCount} of {totalCount} processed)
+                ({completedCount} of {totalCount} stored safely)
               </span>
             </h4>
           </div>
           <p className="text-xs text-zinc-400">
             {isAllDone 
-              ? 'All files processed and safely stored in your local memory vault.' 
-              : `Processing ${processingCount} files with controlled background concurrency...`}
+              ? 'All files processed and confirmed stored in your local persistent vault.' 
+              : `Processing ${processingCount || totalCount} files with controlled background concurrency...`}
           </p>
         </div>
 
@@ -116,7 +134,7 @@ export default function UploadQueueView({
       <div className="py-5">
         <div className="flex items-center justify-between text-xs font-medium text-zinc-400 mb-2">
           <span>Overall Progress: {totalProgress}%</span>
-          <span>{completedCount} Done / {errorCount > 0 ? `${errorCount} Failed / ` : ''}{pendingCount + processingCount} Remaining</span>
+          <span>{completedCount} Stored / {errorCount > 0 ? `${errorCount} Failed / ` : ''}{pendingCount + processingCount} Remaining</span>
         </div>
         <div className="w-full h-2 rounded-full bg-white/5 overflow-hidden">
           <motion.div
@@ -144,7 +162,7 @@ export default function UploadQueueView({
               </div>
               <div>
                 <h5 className="text-sm font-bold text-white">
-                  {completedCount} Memories Ready for Intelligent Organization
+                  {completedCount} Files Ready for Intelligent Organization
                 </h5>
                 <p className="text-xs text-zinc-300 mt-0.5">
                   Let Dostflix analyze timestamps, locations, and folders to suggest grouped memories.
@@ -160,17 +178,22 @@ export default function UploadQueueView({
               className="px-5 py-2.5 rounded-xl font-bold text-xs text-zinc-950 bg-emerald-400 hover:bg-emerald-300 shadow-lg active:scale-95 transition-all shrink-0 flex items-center justify-center gap-2"
             >
               <Sparkles size={14} />
-              <span>Analyze & Organize</span>
+              <span>Review Suggestions</span>
             </button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Queue Items List (Max 6 shown at a time with clean scroll) */}
-      <div className="max-h-96 overflow-y-auto pr-1 space-y-2.5 no-scrollbar divide-y divide-white/[0.04]">
+      {/* Queue Items List */}
+      <div className="max-h-96 overflow-y-auto pr-1 space-y-2.5 custom-scrollbar divide-y divide-white/[0.04]">
         {queue.map((item) => {
-          const isVideo = item.file?.type?.startsWith('video/') || item.filename?.match(/\.(mp4|mov|webm)$/i);
-          const previewThumb = item.result?.thumbnail;
+          const displayMediaItem = item.result || {
+            originalFilename: item.filename,
+            fileType: item.file?.type,
+            fileSize: item.fileSize,
+            fileBlob: item.file,
+            mediaType: item.file?.type?.startsWith('video/') ? 'video' : 'image',
+          };
 
           return (
             <div
@@ -179,22 +202,13 @@ export default function UploadQueueView({
             >
               {/* Left: Preview + Meta */}
               <div className="flex items-center gap-3 min-w-0 flex-1">
-                {/* Thumbnail / File Icon */}
-                <div className="w-11 h-11 rounded-xl bg-zinc-900 border border-white/10 overflow-hidden shrink-0 flex items-center justify-center relative">
-                  {previewThumb ? (
-                    <img src={previewThumb} alt="" className="w-full h-full object-cover" />
-                  ) : isVideo ? (
-                    <VideoIcon size={18} className="text-zinc-500" />
-                  ) : (
-                    <ImageIcon size={18} className="text-zinc-500" />
-                  )}
-
-                  {/* Status Indicator Dot */}
-                  <span className={`absolute top-1 right-1 w-2 h-2 rounded-full border border-black/80 ${
-                    item.status === 'completed' ? 'bg-emerald-400' :
-                    item.status === 'processing' ? 'bg-cyan-400 animate-ping' :
-                    item.status === 'error' ? 'bg-rose-500' : 'bg-zinc-600'
-                  }`} />
+                {/* Robust Thumbnail Component - NEVER an empty black box */}
+                <div className="w-12 h-12 shrink-0">
+                  <MediaThumbnail
+                    item={displayMediaItem}
+                    aspectRatio="square"
+                    showBadges={false}
+                  />
                 </div>
 
                 {/* Details */}
@@ -218,7 +232,7 @@ export default function UploadQueueView({
                     {item.status === 'completed' ? (
                       <span className="text-emerald-400 flex items-center gap-1">
                         <CheckCircle2 size={12} />
-                        <span>Ready in vault</span>
+                        <span>Stored safely in local vault</span>
                         {item.result?.captureDate && (
                           <span className="text-zinc-500">
                             • {new Date(item.result.captureDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
@@ -227,7 +241,7 @@ export default function UploadQueueView({
                       </span>
                     ) : item.status === 'processing' ? (
                       <span className="text-cyan-400">
-                        {item.stage || 'Processing...'} ({item.progress}%)
+                        {getStageDescription(item.stage, item.progress)}
                       </span>
                     ) : item.status === 'error' ? (
                       <span className="text-rose-400 flex items-center gap-1">

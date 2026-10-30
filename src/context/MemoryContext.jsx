@@ -188,7 +188,7 @@ export function MemoryProvider({ children }) {
       thumbnail: newMemory.thumbnail || (newMemory.assets && newMemory.assets[0]) || '/WhatsApp Image 2026-07-30 at 6.42.12 PM.jpeg',
       tags: newMemory.tags || ['Squad', 'Memory'],
       people: newMemory.people || ['Vaibhav', 'Stuti', 'Lakshay'],
-      location: newMemory.location || 'Squad Hangout',
+      location: newMemory.location || '',
       mood: newMemory.mood || 'happy',
       collectionId: newMemory.collectionId || 'coll-keepsakes',
       featured: Boolean(newMemory.featured),
@@ -254,7 +254,7 @@ export function MemoryProvider({ children }) {
   const addAssetToMemory = useCallback(async (memoryId, assetUrlOrMediaItem) => {
     const assetUrl = typeof assetUrlOrMediaItem === 'string' 
       ? assetUrlOrMediaItem 
-      : (assetUrlOrMediaItem.thumbnail || assetUrlOrMediaItem.fileUrl);
+      : (assetUrlOrMediaItem.previewUrl || assetUrlOrMediaItem.thumbnail || assetUrlOrMediaItem.fileUrl);
 
     setMemoryOverrides(prev => {
       const targetMemory = rawMemories.find(m => m.id === memoryId);

@@ -139,11 +139,11 @@ export default function MemoryStudio() {
   // Apply suggestions from review modal: Create suggested new memories
   const handleCreateSuggestedMemories = async (groupsToCreate) => {
     for (const group of groupsToCreate) {
-      const assetUrls = group.files.map(f => f.thumbnail || f.fileUrl).filter(Boolean);
+      const assetUrls = group.files.map(f => f.previewUrl || f.thumbnail || f.fileUrl).filter(Boolean);
       const newMem = addMemory({
         title: group.suggestedTitle,
-        date: group.suggestedDate ? group.suggestedDate.split('T')[0] : new Date().toISOString().split('T')[0],
-        location: group.suggestedLocation || 'Squad Hangout',
+        date: group.suggestedDate ? group.suggestedDate.split('T')[0] : (new Date().toISOString().split('T')[0]),
+        location: group.suggestedLocation || '',
         collectionId: group.suggestedCategory || 'coll-keepsakes',
         mood: group.suggestedMood || 'happy',
         assets: assetUrls,

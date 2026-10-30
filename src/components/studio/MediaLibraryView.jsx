@@ -16,13 +16,16 @@ import {
   AlertTriangle,
   Sparkles,
   ExternalLink,
-  Check
+  Check,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
 import { useMemories } from '../../context/MemoryContext';
 import { deleteMediaFile, updateMediaFile } from '../../services/indexedDbStorage';
 import soundFx from '../../utils/soundFx';
+import MediaThumbnail from './MediaThumbnail';
+import MediaLightbox from './MediaLightbox';
 
 export default function MediaLibraryView({
   allMedia = [],
@@ -38,6 +41,10 @@ export default function MediaLibraryView({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [assignDropdownOpen, setAssignDropdownOpen] = useState(false);
+
+  // Lightbox state
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   // Filter media based on tab & search
   const filteredMedia = useMemo(() => {
@@ -76,6 +83,11 @@ export default function MediaLibraryView({
     } else {
       setSelectedIds(filteredMedia.map(m => m.id));
     }
+  };
+
+  const openLightbox = (index) => {
+    setLightboxIndex(index);
+    setIsLightboxOpen(true);
   };
 
   // Bulk Delete
@@ -161,40 +173,51 @@ export default function MediaLibraryView({
           ))}
         </div>
 
-        {/* Search + View Mode */}
+        {/* Search & Layout Toggle */}
         <div className="flex items-center gap-3">
-          <div className="relative">
+          {/* Search bar */}
+          <div className="relative flex-1 md:w-56">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
             <input
               type="text"
+              placeholder="Search filename..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search filename or folder..."
-              className="pl-8 pr-3 py-1.5 rounded-xl bg-zinc-900 border border-white/10 focus:border-white/30 text-xs text-white placeholder-zinc-600 focus:outline-none w-48 sm:w-64"
+              className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30"
             />
           </div>
 
-          <div className="flex items-center bg-white/5 rounded-xl p-0.5 border border-white/10">
+          {/* Grid / List View Toggle */}
+          <div className="flex items-center bg-white/[0.03] border border-white/10 rounded-xl p-0.5">
             <button
-              onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white/20 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              onClick={() => {
+                soundFx.playClick();
+                setViewMode('grid');
+              }}
+              className={`p-1.5 rounded-lg transition-all ${
+                viewMode === 'grid' ? 'bg-white/10 text-white shadow' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
               title="Grid View"
             >
-              <Grid size={14} />
+              <Grid size={15} />
             </button>
             <button
-              onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white/20 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              onClick={() => {
+                soundFx.playClick();
+                setViewMode('list');
+              }}
+              className={`p-1.5 rounded-lg transition-all ${
+                viewMode === 'list' ? 'bg-white/10 text-white shadow' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
               title="List View"
             >
-              <List size={14} />
+              <List size={15} />
             </button>
           </div>
         </div>
-
       </div>
 
-      {/* Bulk Action Bar (Visible when files are selected) */}
+      {/* Bulk Action Sticky Bar (Appears when items are selected) */}
       <AnimatePresence>
         {selectedIds.length > 0 && (
           <motion.div
@@ -203,26 +226,31 @@ export default function MediaLibraryView({
             exit={{ opacity: 0, y: -10 }}
             className="p-3.5 rounded-2xl bg-zinc-900 border border-white/15 shadow-2xl flex flex-wrap items-center justify-between gap-3 text-xs"
           >
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-white bg-white/10 px-2.5 py-1 rounded-lg">
-                {selectedIds.length} Selected
-              </span>
+            <div className="flex items-center gap-3">
               <button
                 onClick={selectAll}
-                className="text-zinc-400 hover:text-white underline text-xs ml-1"
+                className="flex items-center gap-1.5 text-zinc-300 hover:text-white font-medium"
               >
-                {selectedIds.length === filteredMedia.length ? 'Deselect All' : 'Select All'}
+                <CheckSquare size={15} className="text-emerald-400" />
+                <span>{selectedIds.length} of {filteredMedia.length} Selected</span>
+              </button>
+              <span className="text-zinc-600">•</span>
+              <button
+                onClick={() => setSelectedIds([])}
+                className="text-zinc-400 hover:text-zinc-200"
+              >
+                Deselect All
               </button>
             </div>
 
-            <div className="flex items-center gap-2 relative">
+            <div className="flex items-center gap-2">
               {/* Assign to Memory Dropdown */}
               <div className="relative">
                 <button
-                  onClick={() => setAssignDropdownOpen(!assignDropdownOpen)}
-                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold flex items-center gap-1.5 transition-colors"
+                  onClick={() => setAssignDropdownOpen(prev => !prev)}
+                  className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors"
                 >
-                  <FolderPlus size={13} />
+                  <FolderPlus size={14} />
                   <span>Assign to Memory</span>
                 </button>
 
@@ -290,55 +318,38 @@ export default function MediaLibraryView({
       {/* Media Grid View */}
       {viewMode === 'grid' ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5">
-          {filteredMedia.map(item => {
+          {filteredMedia.map((item, idx) => {
             const isSelected = selectedIds.includes(item.id);
-            const isVideo = item.mediaType === 'video';
 
             return (
-              <div
-                key={item.id}
-                onClick={() => toggleSelect(item.id)}
-                className={`group relative rounded-2xl overflow-hidden bg-zinc-950 border-2 cursor-pointer transition-all aspect-square ${
-                  isSelected 
-                    ? 'border-emerald-400 ring-2 ring-emerald-500/30 scale-[0.98]' 
-                    : 'border-white/5 hover:border-white/20'
-                }`}
-              >
-                {/* Media Image */}
-                <img
-                  src={item.thumbnail}
-                  alt={item.originalFilename}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
+              <div key={item.id} className="relative group">
+                <MediaThumbnail
+                  item={item}
+                  aspectRatio="square"
+                  selectable
+                  selected={isSelected}
+                  onSelect={() => toggleSelect(item.id)}
+                  onClick={() => openLightbox(idx)}
                 />
 
-                {/* Video Badge */}
-                {isVideo && (
-                  <span className="absolute bottom-2 left-2 p-1 rounded-md bg-black/70 backdrop-blur-md text-white text-[10px] flex items-center gap-1 border border-white/10">
-                    <Video size={11} />
-                    <span>Video</span>
-                  </span>
-                )}
+                {/* Inspect Button overlay */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openLightbox(idx);
+                  }}
+                  className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/70 hover:bg-white/20 text-white backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all border border-white/10 z-10"
+                  title="View fullscreen"
+                >
+                  <Eye size={12} />
+                </button>
 
-                {/* Duplicate Badge */}
-                {item.isDuplicate && (
-                  <span className="absolute top-2 left-2 bg-amber-500/80 backdrop-blur-md text-zinc-950 font-bold px-1.5 py-0.2 rounded text-[9px] shadow">
-                    DUP
-                  </span>
-                )}
-
-                {/* Checkbox Trigger */}
-                <div className={`absolute top-2 right-2 p-1 rounded-lg backdrop-blur-md transition-all ${
-                  isSelected ? 'bg-emerald-500 text-zinc-950' : 'bg-black/60 text-white opacity-0 group-hover:opacity-100'
-                }`}>
-                  <Check size={12} className={isSelected ? 'stroke-[3]' : 'opacity-40'} />
-                </div>
-
-                {/* Assigned Memory Tag */}
+                {/* Assigned Tag */}
                 {item.assignedMemoryId && (
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-2 text-[10px] text-zinc-300 truncate">
+                  <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-sm text-[9px] text-zinc-300 font-medium border border-white/10 pointer-events-none">
                     Assigned
-                  </div>
+                  </span>
                 )}
               </div>
             );
@@ -347,7 +358,7 @@ export default function MediaLibraryView({
       ) : (
         /* Media List View */
         <div className="border border-white/10 rounded-2xl overflow-hidden divide-y divide-white/5 bg-zinc-950/40">
-          {filteredMedia.map(item => {
+          {filteredMedia.map((item, idx) => {
             const isSelected = selectedIds.includes(item.id);
             const isVideo = item.mediaType === 'video';
 
@@ -368,11 +379,19 @@ export default function MediaLibraryView({
                     </div>
                   </div>
 
-                  <img
-                    src={item.thumbnail}
-                    alt=""
-                    className="w-10 h-10 rounded-xl object-cover shrink-0 border border-white/10"
-                  />
+                  <div 
+                    className="w-12 h-12 shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openLightbox(idx);
+                    }}
+                  >
+                    <MediaThumbnail
+                      item={item}
+                      aspectRatio="square"
+                      showBadges={false}
+                    />
+                  </div>
 
                   <div className="min-w-0 flex-1">
                     <span className="font-semibold text-white text-xs truncate block">
@@ -385,12 +404,26 @@ export default function MediaLibraryView({
                   </div>
                 </div>
 
-                <div className="text-right text-xs text-zinc-400 shrink-0">
-                  {item.assignedMemoryId ? (
-                    <span className="text-emerald-400 font-medium text-[11px]">Assigned</span>
-                  ) : (
-                    <span className="text-zinc-500 text-[11px]">Unassigned</span>
-                  )}
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openLightbox(idx);
+                    }}
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-300 hover:text-white transition-colors"
+                    title="Inspect details"
+                  >
+                    <Eye size={13} />
+                  </button>
+
+                  <div className="text-right text-xs text-zinc-400">
+                    {item.assignedMemoryId ? (
+                      <span className="text-emerald-400 font-medium text-[11px]">Assigned</span>
+                    ) : (
+                      <span className="text-zinc-500 text-[11px]">Unassigned</span>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -404,6 +437,14 @@ export default function MediaLibraryView({
           No media files match this filter. Upload new files in the "Upload & Organize" tab.
         </div>
       )}
+
+      {/* Full Lightbox */}
+      <MediaLightbox
+        items={filteredMedia}
+        initialIndex={lightboxIndex}
+        isOpen={isLightboxOpen}
+        onClose={() => setIsLightboxOpen(false)}
+      />
 
     </div>
   );

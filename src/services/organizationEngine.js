@@ -1,9 +1,10 @@
 // Intelligent Memory Organization Engine for Dostflix Memory Studio
-// Analyzes uploaded files, detects existing memory matches, forms temporal & spatial clusters,
-// and computes confidence scores for suggestion review.
+// Ground-truth clustering based strictly on verifiable metadata (EXIF, GPS, folders, timestamps, sequences).
+// NO fabricated dates, NO fake locations ("Squad Hangout", etc.), NO invented squad titles.
 
 // Haversine distance in kilometers between two GPS coordinates
 export function calculateGpsDistanceKm(lat1, lon1, lat2, lon2) {
+  if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
   const R = 6371; // Earth radius in km
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -16,7 +17,7 @@ export function calculateGpsDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 // Check if two timestamps are within a given time window (in hours)
-export function isWithinHours(dateStr1, dateStr2, maxHours = 8) {
+export function isWithinHours(dateStr1, dateStr2, maxHours = 6) {
   if (!dateStr1 || !dateStr2) return false;
   const t1 = new Date(dateStr1).getTime();
   const t2 = new Date(dateStr2).getTime();
@@ -25,54 +26,90 @@ export function isWithinHours(dateStr1, dateStr2, maxHours = 8) {
   return diffHours <= maxHours;
 }
 
-// Generate smart title from folder, date, or filename
-export function suggestMemoryTitle(files) {
-  if (!files || files.length === 0) return 'Untitled Memory';
+// Check if two filenames appear to be part of a sequential camera burst or batch
+export function isSequentialFilename(name1, name2) {
+  if (!name1 || !name2) return false;
+  // Match prefix and trailing number, e.g., "IMG_1042.jpg" -> prefix="img_", num=1042
+  const re = /^(.*?)(\d+)(?:\.[^.]+)?$/i;
+  const m1 = name1.match(re);
+  const m2 = name2.match(re);
+  if (!m1 || !m2) return false;
+  if (m1[1].toLowerCase() !== m2[1].toLowerCase()) return false;
+  const diff = Math.abs(parseInt(m1[2], 10) - parseInt(m2[2], 10));
+  return diff >= 1 && diff <= 5; // within 5 consecutive frames
+}
 
-  // 1. If files share a non-empty folder name (e.g., "Goa Trip", "Photobooth")
-  const folderNames = files.map(f => f.folderName).filter(Boolean);
+// Helper to check if a folder name is meaningful (not generic system folders)
+export function isMeaningfulFolder(folderName) {
+  if (!folderName) return false;
+  const generic = ['media', 'dcim', 'images', 'photos', 'camera', 'downloads', 'pictures', 'videos', '100apple', '100media'];
+  return !generic.includes(folderName.trim().toLowerCase());
+}
+
+// Generate an authentic title from real metadata (Folder > Date > Neutral Fallback)
+// Never fabricates fake squad events or fantasy dates.
+export function suggestMemoryTitle(files) {
+  if (!files || files.length === 0) return 'Suggested Memory';
+
+  // 1. Check for shared meaningful folder name
+  const folderNames = files.map(f => f.folderName).filter(isMeaningfulFolder);
   if (folderNames.length > 0) {
     const counts = {};
     folderNames.forEach(name => {
       counts[name] = (counts[name] || 0) + 1;
     });
     const topFolder = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
-    if (topFolder && topFolder.toLowerCase() !== 'media' && topFolder.toLowerCase() !== 'dcim') {
+    if (topFolder) {
       return topFolder
         .replace(/[-_]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
         .replace(/\b\w/g, l => l.toUpperCase());
     }
   }
 
-  // 2. Derive from common capture date
-  const dates = files.map(f => f.captureDate).filter(Boolean);
-  if (dates.length > 0) {
-    const firstDate = new Date(dates[0]);
-    if (!isNaN(firstDate.getTime())) {
-      const monthYear = firstDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      const day = firstDate.getDate();
-      return `Squad Gathering — ${day} ${monthYear}`;
-    }
+  // 2. Derive from verified or genuine capture date
+  const validDates = files
+    .map(f => f.captureDate)
+    .filter(Boolean)
+    .map(d => new Date(d))
+    .filter(d => !isNaN(d.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (validDates.length > 0) {
+    const earliest = validDates[0];
+    const formattedDate = earliest.toLocaleDateString('en-US', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+    return `Suggested Memory — ${formattedDate}`;
   }
 
-  return `Squad Moments — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+  // 3. Fallback: Neutral label (no fake dates or made-up event names)
+  return 'Suggested Memory';
 }
 
-// Main Analysis Function
+/**
+ * Main Analysis & Clustering Engine
+ * Grounded strictly in real file metadata.
+ */
 export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []) {
   const matchExisting = []; // Matches to existing memories
   const suggestedNew = [];  // New group suggestions
-  const unorganized = [];   // Isolated / low-confidence files
+  const unorganized = [];   // Isolated or low-confidence files
 
-  // Exclude files that are already assigned to a memory
+  // Only analyze unassigned files
   const unassignedFiles = uploadedMediaList.filter(f => !f.assignedMemoryId);
   const remainingFiles = [...unassignedFiles];
 
-  // STEP 1: COMPARE AGAINST EXISTING MEMORIES
+  // =========================================================================
+  // STEP 1: MATCH AGAINST EXISTING MEMORIES
+  // =========================================================================
   existingMemories.forEach(memory => {
     const memoryDate = memory.date ? new Date(memory.date) : null;
-    const memoryTitleLower = (memory.title || '').toLowerCase();
-    const memoryLocationLower = (memory.location || '').toLowerCase();
+    const memoryTitleLower = (memory.title || '').trim().toLowerCase();
+    const memoryLocationLower = (memory.location || '').trim().toLowerCase();
     const matchedFiles = [];
     const matchReasons = new Set();
     let totalScore = 0;
@@ -81,49 +118,55 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
       let fileScore = 0;
       const fileReasons = [];
 
-      // Check capture date vs memory date (within 48 hours)
+      // Signal A: Matching date within 48 hours
       if (file.captureDate && memoryDate && !isNaN(memoryDate.getTime())) {
         const fileDate = new Date(file.captureDate);
-        const dayDiff = Math.abs(fileDate.getTime() - memoryDate.getTime()) / (1000 * 60 * 60 * 24);
-        if (dayDiff <= 1.0) {
-          fileScore += 50;
-          fileReasons.push('Matching capture date');
-        } else if (dayDiff <= 3.0) {
-          fileScore += 25;
-          fileReasons.push('Close date proximity');
+        if (!isNaN(fileDate.getTime())) {
+          const dayDiff = Math.abs(fileDate.getTime() - memoryDate.getTime()) / (1000 * 60 * 60 * 24);
+          if (dayDiff <= 1.0) {
+            fileScore += 50;
+            fileReasons.push(file.isVerifiedMetadata ? 'Verified EXIF date matches memory date (within 24h)' : 'Inferred date matches memory date');
+          } else if (dayDiff <= 2.5) {
+            fileScore += 30;
+            fileReasons.push('Close date proximity to memory');
+          }
         }
       }
 
-      // Check folder or filename matching memory title/location
+      // Signal B: Shared location keyword in filename or folder
       const filenameLower = (file.originalFilename || '').toLowerCase();
       const folderLower = (file.folderName || '').toLowerCase();
 
-      if (memoryLocationLower && (filenameLower.includes(memoryLocationLower) || folderLower.includes(memoryLocationLower))) {
-        fileScore += 35;
-        fileReasons.push(`Location matched: ${memory.location}`);
-      }
-
-      if (folderLower && memoryTitleLower.includes(folderLower)) {
-        fileScore += 35;
-        fileReasons.push(`Folder name matches memory: "${file.folderName}"`);
-      }
-
-      // Check GPS proximity if both have coordinates
-      if (file.gps && memory.coordinates) {
-        const dist = calculateGpsDistanceKm(
-          file.gps.latitude,
-          file.gps.longitude,
-          memory.coordinates.latitude || memory.coordinates.lat,
-          memory.coordinates.longitude || memory.coordinates.lng
-        );
-        if (dist <= 5.0) {
-          fileScore += 45;
-          fileReasons.push(`Within ${(dist).toFixed(1)} km of memory location`);
+      if (memoryLocationLower && memoryLocationLower.length > 2) {
+        if (filenameLower.includes(memoryLocationLower) || folderLower.includes(memoryLocationLower)) {
+          fileScore += 40;
+          fileReasons.push(`Location matched: "${memory.location}"`);
         }
       }
 
-      // Threshold to consider matched to this existing memory
-      if (fileScore >= 35) {
+      // Signal C: Folder name contains memory title
+      if (folderLower && isMeaningfulFolder(folderLower) && memoryTitleLower.includes(folderLower)) {
+        fileScore += 40;
+        fileReasons.push(`Folder name matches memory: "${file.folderName}"`);
+      }
+
+      // Signal D: Verified GPS proximity (within 5 km)
+      if (file.gps && (memory.coordinates || memory.gps)) {
+        const targetGps = memory.coordinates || memory.gps;
+        const dist = calculateGpsDistanceKm(
+          file.gps.latitude,
+          file.gps.longitude,
+          targetGps.latitude || targetGps.lat,
+          targetGps.longitude || targetGps.lng
+        );
+        if (dist != null && dist <= 5.0) {
+          fileScore += 50;
+          fileReasons.push(`Within ${dist.toFixed(1)} km of memory GPS location`);
+        }
+      }
+
+      // Threshold to consider matched to this memory
+      if (fileScore >= 40) {
         matchedFiles.push({ file, score: fileScore });
         fileReasons.forEach(r => matchReasons.add(r));
         totalScore += fileScore;
@@ -131,9 +174,12 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
     });
 
     if (matchedFiles.length > 0) {
-      // Calculate overall confidence level
       const avgScore = totalScore / matchedFiles.length;
-      const confidence = avgScore >= 60 ? 'HIGH CONFIDENCE' : (avgScore >= 35 ? 'MEDIUM CONFIDENCE' : 'LOW CONFIDENCE');
+      // High confidence requires multi-signal or very high match
+      const confidenceLevel = avgScore >= 70 ? 'high' : (avgScore >= 45 ? 'medium' : 'low');
+      const confidence = confidenceLevel === 'high' 
+        ? 'HIGH CONFIDENCE' 
+        : (confidenceLevel === 'medium' ? 'MEDIUM CONFIDENCE' : 'LOW CONFIDENCE');
 
       matchExisting.push({
         id: `match-${memory.id}-${Date.now()}`,
@@ -142,7 +188,7 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
         files: matchedFiles.map(m => m.file),
         reasons: Array.from(matchReasons),
         confidence,
-        confidenceLevel: confidence === 'HIGH CONFIDENCE' ? 'high' : (confidence === 'MEDIUM CONFIDENCE' ? 'medium' : 'low'),
+        confidenceLevel,
       });
 
       // Remove matched files from remaining pool
@@ -155,8 +201,10 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
     }
   });
 
+  // =========================================================================
   // STEP 2: CLUSTER REMAINING FILES INTO NEW MEMORIES
-  // Sort remaining files by captureDate (or lastModified)
+  // =========================================================================
+  // Sort remaining files chronologically by capture date, or lastModified
   remainingFiles.sort((a, b) => {
     const tA = a.captureDate ? new Date(a.captureDate).getTime() : 0;
     const tB = b.captureDate ? new Date(b.captureDate).getTime() : 0;
@@ -172,27 +220,36 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
       return;
     }
 
+    const anchorFile = currentCluster[0];
     const previousFile = currentCluster[currentCluster.length - 1];
     let isConnected = false;
 
-    // Signal 1: Proximity in time (within 10 hours)
-    if (file.captureDate && previousFile.captureDate) {
-      if (isWithinHours(file.captureDate, previousFile.captureDate, 10)) {
+    // Signal 1: Proximity in time (within 6 hours of previous file, and within 18 hours of cluster start)
+    if (file.captureDate && previousFile.captureDate && anchorFile.captureDate) {
+      if (isWithinHours(file.captureDate, previousFile.captureDate, 6) && 
+          isWithinHours(file.captureDate, anchorFile.captureDate, 18)) {
         isConnected = true;
       }
     }
 
-    // Signal 2: Common folder name
-    if (file.folderName && previousFile.folderName && file.folderName.toLowerCase() === previousFile.folderName.toLowerCase()) {
+    // Signal 2: Common meaningful folder name
+    if (file.folderName && previousFile.folderName && 
+        isMeaningfulFolder(file.folderName) && 
+        file.folderName.toLowerCase() === previousFile.folderName.toLowerCase()) {
       isConnected = true;
     }
 
     // Signal 3: GPS proximity (within 3km)
     if (file.gps && previousFile.gps) {
       const dist = calculateGpsDistanceKm(file.gps.latitude, file.gps.longitude, previousFile.gps.latitude, previousFile.gps.longitude);
-      if (dist <= 3.0) {
+      if (dist != null && dist <= 3.0) {
         isConnected = true;
       }
+    }
+
+    // Signal 4: Sequential filename burst (e.g. IMG_1041.jpg, IMG_1042.jpg)
+    if (isSequentialFilename(file.originalFilename, previousFile.originalFilename)) {
+      isConnected = true;
     }
 
     if (isConnected) {
@@ -207,44 +264,113 @@ export function analyzeAndOrganizeBatch(uploadedMediaList, existingMemories = []
     clusters.push(currentCluster);
   }
 
-  // Evaluate clusters: groups with 2 or more files become suggested new memories;
-  // single isolated files with no strong date/location go to unorganized
+  // =========================================================================
+  // STEP 3: EVALUATE CLUSTERS (STRICT EVIDENCE & CONFIDENCE)
+  // =========================================================================
   clusters.forEach((cluster, idx) => {
+    // Only clusters with 2 or more files and at least one strong unifying signal become suggestions
     if (cluster.length >= 2) {
       const dates = cluster.map(f => f.captureDate).filter(Boolean);
-      const suggestedDate = dates.length > 0 ? dates[0] : new Date().toISOString();
-      const suggestedTitle = suggestMemoryTitle(cluster);
+      const verifiedDates = cluster.filter(f => f.isVerifiedMetadata && f.captureDate);
+      const hasVerifiedDates = verifiedDates.length >= 2;
+      const hasFolder = isMeaningfulFolder(cluster[0]?.folderName) && cluster.every(f => f.folderName === cluster[0].folderName);
       
-      // Determine confidence
-      const hasVerifiedDates = cluster.some(f => f.isVerifiedMetadata);
-      const hasGps = cluster.some(f => f.gps);
-      const hasFolder = cluster.some(f => f.folderName);
-      let confidence = 'MEDIUM CONFIDENCE';
-      if (hasVerifiedDates && (hasGps || hasFolder)) {
-        confidence = 'HIGH CONFIDENCE';
-      } else if (!hasVerifiedDates && !hasFolder) {
-        confidence = 'LOW CONFIDENCE';
+      const filesWithGps = cluster.filter(f => f.gps);
+      const hasGps = filesWithGps.length >= 2;
+
+      let hasSequential = false;
+      for (let i = 1; i < cluster.length; i++) {
+        if (isSequentialFilename(cluster[i].originalFilename, cluster[i - 1].originalFilename)) {
+          hasSequential = true;
+          break;
+        }
       }
+
+      // Count strong signals
+      let signalCount = 0;
+      const reasons = [];
+
+      if (hasVerifiedDates) {
+        signalCount += 1;
+        reasons.push(`${cluster.length} files with matching EXIF capture timestamps (within 6h)`);
+      } else if (dates.length >= 2) {
+        signalCount += 0.5;
+        reasons.push(`${cluster.length} files with close chronological timestamps`);
+      }
+
+      if (hasFolder) {
+        signalCount += 1;
+        reasons.push(`Shared source folder: "${cluster[0].folderName}"`);
+      }
+
+      if (hasGps) {
+        signalCount += 1;
+        const d = calculateGpsDistanceKm(
+          filesWithGps[0].gps.latitude, filesWithGps[0].gps.longitude,
+          filesWithGps[1].gps.latitude, filesWithGps[1].gps.longitude
+        );
+        reasons.push(`Matching GPS location${d != null ? ` (within ${d.toFixed(1)} km)` : ''}`);
+      }
+
+      if (hasSequential) {
+        signalCount += 1;
+        reasons.push('Consecutive camera shutter sequence detected');
+      }
+
+      // If there are zero matching signals, files are random — move to unorganized
+      if (signalCount < 1.0) {
+        unorganized.push(...cluster);
+        return;
+      }
+
+      // Confidence requires multiple verifiable signals for HIGH
+      let confidenceLevel = 'low';
+      if (signalCount >= 2.0) {
+        confidenceLevel = 'high';
+      } else if (signalCount >= 1.0) {
+        confidenceLevel = 'medium';
+      }
+
+      const confidence = confidenceLevel === 'high' 
+        ? 'HIGH CONFIDENCE' 
+        : (confidenceLevel === 'medium' ? 'MEDIUM CONFIDENCE' : 'LOW CONFIDENCE');
+
+      // Date Resolution: Earliest valid date, or null if unknown (NEVER fake today's date)
+      const suggestedDate = dates.length > 0 ? dates[0] : null;
+      const dateStatus = hasVerifiedDates ? 'verified' : (dates.length > 0 ? 'inferred' : 'unknown');
+
+      // Location Resolution: Verified GPS / metadata or null (NEVER fake "Squad Hangout")
+      const gpsFile = cluster.find(f => f.gps);
+      let suggestedLocation = null;
+      let locationStatus = 'unknown';
+
+      if (gpsFile && gpsFile.gps) {
+        suggestedLocation = `${gpsFile.gps.latitude.toFixed(3)}°, ${gpsFile.gps.longitude.toFixed(3)}°`;
+        locationStatus = 'verified';
+      } else if (cluster.find(f => f.locationName)) {
+        suggestedLocation = cluster.find(f => f.locationName).locationName;
+        locationStatus = 'inferred';
+      }
+
+      const suggestedTitle = suggestMemoryTitle(cluster);
 
       suggestedNew.push({
         id: `new-group-${Date.now()}-${idx}`,
         type: 'suggest_new',
         suggestedTitle,
         suggestedDate,
-        suggestedLocation: cluster.find(f => f.gps)?.locationName || 'Squad Hangout',
+        dateStatus, // 'verified' | 'inferred' | 'unknown'
+        suggestedLocation,
+        locationStatus, // 'verified' | 'inferred' | 'unknown'
         suggestedCategory: 'coll-keepsakes',
         suggestedMood: 'happy',
         files: cluster,
         confidence,
-        confidenceLevel: confidence === 'HIGH CONFIDENCE' ? 'high' : (confidence === 'MEDIUM CONFIDENCE' ? 'medium' : 'low'),
-        reasons: [
-          `${cluster.length} files captured in close temporal sequence`,
-          hasFolder ? `Shared folder: "${cluster[0].folderName}"` : null,
-          hasGps ? 'Matching GPS coordinates' : null,
-        ].filter(Boolean),
+        confidenceLevel,
+        reasons,
       });
     } else {
-      // Single isolated file
+      // Single isolated file without clustering signals
       unorganized.push(...cluster);
     }
   });

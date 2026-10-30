@@ -125,10 +125,10 @@ export default function CreateMemoryModal({
 
     const newMemory = addMemory({
       title: title.trim(),
-      description: description.trim() || 'A cherished squad memory.',
+      description: description.trim() || '',
       date,
-      location: location.trim() || 'Squad Hangout',
-      people: selectedPeople.length > 0 ? selectedPeople : ['Squad'],
+      location: location.trim() || '',
+      people: selectedPeople.length > 0 ? selectedPeople : ['Vaibhav', 'Stuti', 'Lakshay'],
       mood,
       collectionId: collectionId || 'coll-keepsakes',
       tags: tags.length > 0 ? tags : ['Squad'],
@@ -342,7 +342,7 @@ export default function CreateMemoryModal({
                     {title || 'Untitled Memory'}
                   </h4>
                   <p className="text-xs text-zinc-300 truncate mt-0.5">
-                    {date} • {location || 'Squad Hangout'}
+                    {date} {location ? `• ${location}` : ''}
                   </p>
                 </div>
 

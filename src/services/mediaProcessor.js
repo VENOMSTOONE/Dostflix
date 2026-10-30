@@ -1,8 +1,8 @@
 // Media Processor for Dostflix Memory Studio
-// Handles hashing, lightweight thumbnail generation, video poster capture, and controlled concurrency.
+// Handles hashing, robust thumbnail generation, video poster capture, and controlled concurrency.
 
 import { extractFileMetadata } from './exifReader';
-import { findMediaByHash, saveMediaFile } from './indexedDbStorage';
+import { findMediaByHash, saveMediaFile, createBlobUrl } from './indexedDbStorage';
 
 // Compute SHA-256 hash using native Web Crypto API
 export async function computeFileHash(file) {
@@ -13,30 +13,40 @@ export async function computeFileHash(file) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   } catch (err) {
     console.warn('Crypto subtle hash failed, using fallback:', err);
-    // Fallback: fast hash based on size + lastModified + name
     return `hash_${file.size}_${file.lastModified}_${file.name.replace(/[^a-zA-Z0-9]/g, '')}`;
   }
 }
 
 // Generate a lightweight thumbnail (max 360px) from an Image File
-export function generateImageThumbnail(file, maxDimension = 360) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
+// Uses createImageBitmap first for maximum speed & reliability without DOM image decode race conditions.
+export async function generateImageThumbnail(file, maxDimension = 360) {
+  // If file is HEIC, native browser decoders typically fail. Detect early.
+  const isHeic = file.name.match(/\.(heic|heif)$/i) || file.type.includes('heic') || file.type.includes('heif');
+  if (isHeic) {
+    return {
+      thumbnail: null,
+      width: 0,
+      height: 0,
+      format: 'heic',
+      isUnsupportedPreview: true
+    };
+  }
 
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const { width, height } = img;
+  // Strategy A: createImageBitmap (Modern, fast, off-main-thread)
+  if (typeof window !== 'undefined' && typeof window.createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const { width, height } = bitmap;
       let targetW = width;
       let targetH = height;
 
       if (width > maxDimension || height > maxDimension) {
         if (width > height) {
           targetW = maxDimension;
-          targetH = Math.round((height / width) * maxDimension);
+          targetH = Math.max(1, Math.round((height / width) * maxDimension));
         } else {
           targetH = maxDimension;
-          targetW = Math.round((width / height) * maxDimension);
+          targetW = Math.max(1, Math.round((width / height) * maxDimension));
         }
       }
 
@@ -44,22 +54,94 @@ export function generateImageThumbnail(file, maxDimension = 360) {
       canvas.width = targetW;
       canvas.height = targetH;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, targetW, targetH);
+      ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+      bitmap.close();
 
-      const thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.82);
-      resolve({
+      const thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      return {
         thumbnail: thumbnailDataUrl,
         width,
         height,
-      });
-    };
+        format: file.type || 'image/jpeg',
+        isUnsupportedPreview: false
+      };
+    } catch (err) {
+      // createImageBitmap failed (e.g. unusual format), proceed to Strategy B
+    }
+  }
 
-    img.onerror = () => {
+  // Strategy B: FileReader + HTMLImageElement with natural dimensions & safe revoke
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    let timeoutId = setTimeout(() => {
       URL.revokeObjectURL(objectUrl);
       resolve({
         thumbnail: null,
         width: 0,
         height: 0,
+        format: file.type,
+        isUnsupportedPreview: true
+      });
+    }, 4000);
+
+    img.onload = async () => {
+      clearTimeout(timeoutId);
+
+      // Prefer natural dimensions
+      const width = img.naturalWidth || img.width || maxDimension;
+      const height = img.naturalHeight || img.height || maxDimension;
+      let targetW = width;
+      let targetH = height;
+
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          targetW = maxDimension;
+          targetH = Math.max(1, Math.round((height / width) * maxDimension));
+        } else {
+          targetH = maxDimension;
+          targetW = Math.max(1, Math.round((width / height) * maxDimension));
+        }
+      }
+
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        const thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+        URL.revokeObjectURL(objectUrl);
+        resolve({
+          thumbnail: thumbnailDataUrl,
+          width,
+          height,
+          format: file.type,
+          isUnsupportedPreview: false
+        });
+      } catch (e) {
+        URL.revokeObjectURL(objectUrl);
+        resolve({
+          thumbnail: null,
+          width,
+          height,
+          format: file.type,
+          isUnsupportedPreview: true
+        });
+      }
+    };
+
+    img.onerror = () => {
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(objectUrl);
+      resolve({
+        thumbnail: null,
+        width: 0,
+        height: 0,
+        format: file.type,
+        isUnsupportedPreview: true
       });
     };
 
@@ -74,6 +156,7 @@ export function generateVideoPoster(file) {
     video.preload = 'metadata';
     video.muted = true;
     video.playsInline = true;
+    video.crossOrigin = 'anonymous';
     const objectUrl = URL.createObjectURL(file);
 
     const cleanup = () => {
@@ -82,23 +165,24 @@ export function generateVideoPoster(file) {
       video.load();
     };
 
+    // 2.5s safe timeout so video seeking doesn't stall the queue runner
     const timeout = setTimeout(() => {
-      cleanup();
-      resolve({
-        thumbnail: null,
-        duration: 0,
-        width: 0,
-        height: 0,
-      });
-    }, 6000); // 6s safety timeout
-
-    video.onloadedmetadata = () => {
       const duration = video.duration || 0;
       const width = video.videoWidth || 0;
       const height = video.videoHeight || 0;
+      cleanup();
+      resolve({
+        thumbnail: null,
+        duration,
+        width,
+        height,
+        isUnsupportedPreview: true
+      });
+    }, 2500);
 
-      // Seek to 1s or 25% of video to capture a meaningful frame
-      const seekTime = Math.min(1.0, duration * 0.25);
+    video.onloadedmetadata = () => {
+      const duration = video.duration || 0;
+      const seekTime = Math.min(1.0, duration * 0.2);
       video.currentTime = seekTime;
     };
 
@@ -114,10 +198,10 @@ export function generateVideoPoster(file) {
 
         if (targetW > maxDimension || targetH > maxDimension) {
           if (targetW > targetH) {
-            targetH = Math.round((targetH / targetW) * maxDimension);
+            targetH = Math.max(1, Math.round((targetH / targetW) * maxDimension));
             targetW = maxDimension;
           } else {
-            targetW = Math.round((targetW / targetH) * maxDimension);
+            targetW = Math.max(1, Math.round((targetW / targetH) * maxDimension));
             targetH = maxDimension;
           }
         }
@@ -128,7 +212,7 @@ export function generateVideoPoster(file) {
         ctx.drawImage(video, 0, 0, targetW, targetH);
         thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.8);
       } catch (e) {
-        console.warn('Failed to snapshot video poster:', e);
+        console.warn('Failed to snapshot video frame:', e);
       }
 
       const duration = video.duration || 0;
@@ -141,6 +225,7 @@ export function generateVideoPoster(file) {
         duration,
         width,
         height,
+        isUnsupportedPreview: !thumbnailDataUrl
       });
     };
 
@@ -152,6 +237,7 @@ export function generateVideoPoster(file) {
         duration: 0,
         width: 0,
         height: 0,
+        isUnsupportedPreview: true
       });
     };
 
@@ -159,10 +245,10 @@ export function generateVideoPoster(file) {
   });
 }
 
-// Process a single file: extract metadata, hash, create thumbnail, check duplicate
+// Process a single file: extract metadata, hash, create thumbnail, verify storage
 export async function processFileItem(file, onProgress) {
-  const isVideo = file.type.startsWith('video/') || file.name.match(/\.(mp4|mov|webm|m4v)$/i);
-  const isImage = file.type.startsWith('image/') || file.name.match(/\.(jpe?g|png|webp|heic)$/i);
+  const isVideo = file.type.startsWith('video/') || Boolean(file.name.match(/\.(mp4|mov|webm|m4v)$/i));
+  const isImage = file.type.startsWith('image/') || Boolean(file.name.match(/\.(jpe?g|png|webp|heic|heif)$/i));
 
   onProgress?.({ stage: 'hashing', percent: 20 });
   const hash = await computeFileHash(file);
@@ -171,11 +257,11 @@ export async function processFileItem(file, onProgress) {
   const existingWithHash = await findMediaByHash(hash);
   const isDuplicate = Boolean(existingWithHash && existingWithHash.length > 0);
 
-  onProgress?.({ stage: 'metadata', percent: 50 });
+  onProgress?.({ stage: 'metadata', percent: 45 });
   const metadata = await extractFileMetadata(file);
 
-  onProgress?.({ stage: 'thumbnail', percent: 80 });
-  let visualInfo = { thumbnail: null, width: 0, height: 0, duration: 0 };
+  onProgress?.({ stage: 'thumbnail', percent: 70 });
+  let visualInfo = { thumbnail: null, width: 0, height: 0, duration: 0, isUnsupportedPreview: false };
 
   if (isImage) {
     visualInfo = await generateImageThumbnail(file);
@@ -183,8 +269,13 @@ export async function processFileItem(file, onProgress) {
     visualInfo = await generateVideoPoster(file);
   }
 
+  const mediaId = `media-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+  // Create live blob preview URL for immediate session rendering
+  const liveBlobUrl = createBlobUrl(mediaId, file);
+
   const mediaItem = {
-    id: `media-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+    id: mediaId,
     originalFilename: file.name,
     fileType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
     mediaType: isVideo ? 'video' : 'image',
@@ -192,10 +283,13 @@ export async function processFileItem(file, onProgress) {
     hash,
     isDuplicate,
     duplicateOfId: isDuplicate ? existingWithHash[0].id : null,
-    // File blob stored directly in IndexedDB
+    // File blob stored directly in IndexedDB for permanent recovery
     fileBlob: file,
+    // Live blob URL for this session
+    previewUrl: liveBlobUrl,
     // Lightweight thumbnail DataURL for fast rendering
-    thumbnail: visualInfo.thumbnail,
+    thumbnail: visualInfo.thumbnail || liveBlobUrl,
+    isUnsupportedPreview: visualInfo.isUnsupportedPreview,
     dimensions: {
       width: visualInfo.width,
       height: visualInfo.height,
@@ -210,11 +304,13 @@ export async function processFileItem(file, onProgress) {
     folderName: metadata.folderName,
     assignedMemoryId: null,
     isCover: false,
-    status: 'ready', // 'ready' | 'processing' | 'error'
+    status: 'stored', // Confirmed stored
     uploadedAt: new Date().toISOString(),
   };
 
-  onProgress?.({ stage: 'saving', percent: 95 });
+  onProgress?.({ stage: 'storing', percent: 90 });
+  
+  // Persist directly to IndexedDB
   await saveMediaFile(mediaItem);
 
   onProgress?.({ stage: 'completed', percent: 100 });
@@ -222,7 +318,6 @@ export async function processFileItem(file, onProgress) {
 }
 
 // Controlled Concurrency Batch Processor
-// Processes `concurrencyLimit` files in parallel so 100+ files won't freeze the browser
 export class BatchQueueRunner {
   constructor(concurrencyLimit = 3) {
     this.concurrencyLimit = concurrencyLimit;
@@ -300,7 +395,6 @@ export class BatchQueueRunner {
         this.runningCount--;
         this.triggerNext();
 
-        // Check if all items in queue are completed or errored
         const allDone = this.queue.every(i => i.status === 'completed' || i.status === 'error');
         if (allDone && this.runningCount === 0 && this.queue.length > 0) {
           this.onAllComplete?.(this.queue);
@@ -319,12 +413,12 @@ export class BatchQueueRunner {
 
       item.status = 'completed';
       item.progress = 100;
-      item.stage = 'done';
+      item.stage = 'stored';
       item.result = result;
       this.onItemComplete?.(item, result);
     } catch (err) {
       item.status = 'error';
-      item.error = err.message || 'Processing failed';
+      item.error = err.message || 'Storage failed';
       this.onItemError?.(item, err);
     }
   }
