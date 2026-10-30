@@ -56,11 +56,13 @@ export default function UploadQueueView({
   const getStageDescription = (stage, progress) => {
     switch (stage) {
       case 'hashing':
-        return `Hashing & deduplication (${progress || 20}%)`;
+        return `Hashing & deduplication (${progress || 15}%)`;
       case 'metadata':
-        return `Reading EXIF & timestamps (${progress || 45}%)`;
+        return `Reading EXIF & timestamps (${progress || 35}%)`;
+      case 'converting':
+        return `Converting HEIC to browser format (${progress || 55}%)`;
       case 'thumbnail':
-        return `Generating preview (${progress || 70}%)`;
+        return `Generating preview (${progress || 75}%)`;
       case 'storing':
         return `Writing to local vault (${progress || 90}%)`;
       case 'completed':

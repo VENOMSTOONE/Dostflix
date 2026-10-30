@@ -1,6 +1,58 @@
 // EXIF & File Metadata Parser for Dostflix Memory Studio
 // Reads EXIF headers directly from JPEG/TIFF buffers and infers timestamps from filenames and file properties.
 
+// Detect if a file is HEIC / HEIF format via extension, MIME, or ISOBMFF ftyp magic bytes
+export async function isHeicFile(file) {
+  if (!file) return false;
+  const name = file.name || '';
+  if (name.match(/\.(heic|heif)$/i)) return true;
+  const type = file.type || '';
+  if (type.includes('heic') || type.includes('heif')) return true;
+
+  try {
+    if (typeof file.slice === 'function') {
+      const slice = await readFileSlice(file, 0, 32);
+      if (slice && slice.byteLength >= 12) {
+        const view = new DataView(slice);
+        // Check for 'ftyp' at offset 4 (0x66747970)
+        if (view.getUint8(4) === 0x66 && view.getUint8(5) === 0x74 &&
+            view.getUint8(6) === 0x79 && view.getUint8(7) === 0x70) {
+          const brand = String.fromCharCode(
+            view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11)
+          ).toLowerCase();
+          const heicBrands = ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'];
+          if (heicBrands.includes(brand)) return true;
+
+          for (let offset = 16; offset <= slice.byteLength - 4; offset += 4) {
+            const compBrand = String.fromCharCode(
+              view.getUint8(offset), view.getUint8(offset+1), view.getUint8(offset+2), view.getUint8(offset+3)
+            ).toLowerCase();
+            if (heicBrands.includes(compBrand)) return true;
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  return false;
+}
+
+// Helper to apply EXIF fields to metadata result
+function applyExifToResult(exif, result) {
+  if (!exif) return;
+  if (exif.dateTimeOriginal) {
+    result.captureDate = exif.dateTimeOriginal;
+    result.captureDateSource = 'exif';
+    result.isVerifiedMetadata = true;
+  }
+  if (exif.cameraMake) result.cameraMake = exif.cameraMake;
+  if (exif.cameraModel) result.cameraModel = exif.cameraModel;
+  if (exif.gps) {
+    result.gps = exif.gps;
+    result.isVerifiedMetadata = true;
+  }
+}
+
 export async function extractFileMetadata(file) {
   const result = {
     originalFilename: file.name,
@@ -17,26 +69,26 @@ export async function extractFileMetadata(file) {
     locationName: null,
   };
 
-  // Attempt EXIF parsing for images (JPEG/TIFF)
-  if (file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.match(/\.(jpe?g|tiff?)$/i)) {
+  const isHeic = await isHeicFile(file);
+  const isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg' || Boolean(file.name && file.name.match(/\.(jpe?g|tiff?)$/i));
+
+  // Attempt EXIF parsing for JPEG/TIFF
+  if (isJpeg) {
     try {
       const buffer = await readFileSlice(file, 0, 131072); // Read first 128KB
       const exif = parseExifFromBuffer(buffer);
-      if (exif) {
-        if (exif.dateTimeOriginal) {
-          result.captureDate = exif.dateTimeOriginal;
-          result.captureDateSource = 'exif';
-          result.isVerifiedMetadata = true;
-        }
-        if (exif.cameraMake) result.cameraMake = exif.cameraMake;
-        if (exif.cameraModel) result.cameraModel = exif.cameraModel;
-        if (exif.gps) {
-          result.gps = exif.gps;
-          result.isVerifiedMetadata = true;
-        }
-      }
+      applyExifToResult(exif, result);
     } catch (e) {
       // EXIF parse failures are non-fatal
+    }
+  } else if (isHeic) {
+    // Attempt EXIF parsing for HEIC/HEIF files (read first 512KB)
+    try {
+      const buffer = await readFileSlice(file, 0, Math.min(524288, file.size));
+      const exif = parseExifFromHeicBuffer(buffer);
+      applyExifToResult(exif, result);
+    } catch (e) {
+      // Non-fatal
     }
   }
 
@@ -57,7 +109,17 @@ export async function extractFileMetadata(file) {
 
 // Slice a piece of the file as an ArrayBuffer
 function readFileSlice(file, start, end) {
+  if (typeof file.slice === 'function') {
+    const slice = file.slice(start, Math.min(end, file.size));
+    if (typeof slice.arrayBuffer === 'function') {
+      return slice.arrayBuffer();
+    }
+  }
   return new Promise((resolve, reject) => {
+    if (typeof FileReader === 'undefined') {
+      reject(new Error('FileReader not available'));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => reject(reader.error);
@@ -155,6 +217,39 @@ function parseExifFromBuffer(buffer) {
       offset += segmentLength;
     } else {
       break;
+    }
+  }
+
+  return null;
+}
+
+// Low-level EXIF parser for HEIC / HEIF files
+export function parseExifFromHeicBuffer(buffer) {
+  if (!buffer || buffer.byteLength < 16) return null;
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.length;
+  const view = new DataView(buffer);
+
+  // 1. Search for 'Exif\0\0' (0x45, 0x78, 0x69, 0x66, 0x00, 0x00)
+  for (let i = 0; i < len - 14; i++) {
+    if (bytes[i] === 0x45 && bytes[i+1] === 0x78 && bytes[i+2] === 0x69 && bytes[i+3] === 0x66 &&
+        bytes[i+4] === 0x00 && bytes[i+5] === 0x00) {
+      const tiffOffset = i + 6;
+      const parsed = parseTiffHeader(view, tiffOffset);
+      if (parsed && (parsed.dateTimeOriginal || parsed.cameraMake || parsed.cameraModel || parsed.gps)) {
+        return parsed;
+      }
+    }
+  }
+
+  // 2. Search for direct TIFF headers 'II*\0' or 'MM\0*'
+  for (let i = 0; i < len - 12; i++) {
+    if ((bytes[i] === 0x49 && bytes[i+1] === 0x49 && bytes[i+2] === 0x2A && bytes[i+3] === 0x00) ||
+        (bytes[i] === 0x4D && bytes[i+1] === 0x4D && bytes[i+2] === 0x00 && bytes[i+3] === 0x2A)) {
+      const parsed = parseTiffHeader(view, i);
+      if (parsed && (parsed.dateTimeOriginal || parsed.cameraMake || parsed.cameraModel || parsed.gps)) {
+        return parsed;
+      }
     }
   }
 

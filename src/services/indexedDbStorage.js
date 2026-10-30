@@ -88,10 +88,15 @@ export function resolveMediaUrl(item) {
     return item.thumbnail;
   }
 
-  // 2. If item has previewUrl that is valid
+  // 2. If item has a convertedBlob (for HEIC), create/retrieve cached blob URL for it
+  if (item.convertedBlob) {
+    return createBlobUrl(`${item.id}_converted`, item.convertedBlob);
+  }
+
+  // 3. If item has previewUrl that is valid
   if (item.previewUrl) return item.previewUrl;
 
-  // 3. If fileBlob exists, generate/retrieve cached blob URL
+  // 4. If fileBlob exists, generate/retrieve cached blob URL
   if (item.fileBlob) {
     return createBlobUrl(item.id, item.fileBlob);
   }
@@ -136,8 +141,11 @@ export async function getAllMediaFiles() {
 
     request.onsuccess = () => {
       const results = (request.result || []).map(item => {
-        // Ensure previewUrl is populated from fileBlob if thumbnail is missing
-        if (!item.thumbnail && item.fileBlob) {
+        // Ensure previewUrl is populated from convertedBlob (for HEIC) or fileBlob
+        if (item.convertedBlob) {
+          item.previewUrl = createBlobUrl(`${item.id}_converted`, item.convertedBlob);
+          if (!item.thumbnail) item.thumbnail = item.previewUrl;
+        } else if (!item.thumbnail && item.fileBlob) {
           item.previewUrl = createBlobUrl(item.id, item.fileBlob);
           item.thumbnail = item.previewUrl;
         }

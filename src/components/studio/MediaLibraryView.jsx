@@ -107,9 +107,10 @@ export default function MediaLibraryView({
     soundFx.playPop();
     const toDownload = allMedia.filter(m => selectedIds.includes(m.id));
     toDownload.forEach(item => {
-      if (item.fileBlob) {
+      const downloadBlob = item.fileBlob || item.convertedBlob;
+      if (downloadBlob) {
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(item.fileBlob);
+        a.href = URL.createObjectURL(downloadBlob);
         a.download = item.originalFilename || 'dostflix-memory';
         a.click();
       }

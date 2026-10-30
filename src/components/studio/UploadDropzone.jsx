@@ -56,7 +56,7 @@ export default function UploadDropzone({ onFilesSelected, isUploading = false })
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/jpeg,image/png,image/webp,image/heic,image/jpg,video/mp4,video/quicktime,video/webm,video/m4v"
+        accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,image/jpg,video/mp4,video/quicktime,video/webm,video/m4v"
         onChange={handleFileChange}
         className="hidden"
       />

@@ -148,6 +148,13 @@ export default function MediaThumbnail({
           </div>
         )}
 
+        {/* HEIC original format badge indicator */}
+        {item?.isHeic && showBadges && (
+          <div className="absolute bottom-1.5 right-1.5 px-1 py-0.5 rounded bg-black/75 backdrop-blur-sm text-[8px] font-bold text-zinc-300 border border-white/10 pointer-events-none uppercase">
+            HEIC
+          </div>
+        )}
+
         {/* Selection Checkbox */}
         {selectable && (
           <div

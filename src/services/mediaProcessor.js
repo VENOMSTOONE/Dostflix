@@ -1,8 +1,38 @@
 // Media Processor for Dostflix Memory Studio
 // Handles hashing, robust thumbnail generation, video poster capture, and controlled concurrency.
 
-import { extractFileMetadata } from './exifReader';
+import { extractFileMetadata, isHeicFile } from './exifReader';
 import { findMediaByHash, saveMediaFile, createBlobUrl } from './indexedDbStorage';
+
+// Lazy loader for heic2any in browser environment
+let heic2anyPromise = null;
+async function getHeicConverter() {
+  if (typeof window === 'undefined') return null;
+  if (!heic2anyPromise) {
+    heic2anyPromise = import('heic2any').then(m => m.default || m);
+  }
+  return heic2anyPromise;
+}
+
+// Convert a HEIC / HEIF File or Blob into a browser-compatible JPEG Blob
+export async function convertHeicToJpeg(file) {
+  const heic2any = await getHeicConverter();
+  if (!heic2any) {
+    throw new Error('HEIC decoding requires a browser environment.');
+  }
+
+  const result = await heic2any({
+    blob: file,
+    toType: 'image/jpeg',
+    quality: 0.88,
+  });
+
+  const jpegBlob = Array.isArray(result) ? result[0] : result;
+  if (!jpegBlob || !(jpegBlob instanceof Blob)) {
+    throw new Error('HEIC conversion did not yield a valid image blob.');
+  }
+  return jpegBlob;
+}
 
 // Compute SHA-256 hash using native Web Crypto API
 export async function computeFileHash(file) {
@@ -20,16 +50,28 @@ export async function computeFileHash(file) {
 // Generate a lightweight thumbnail (max 360px) from an Image File
 // Uses createImageBitmap first for maximum speed & reliability without DOM image decode race conditions.
 export async function generateImageThumbnail(file, maxDimension = 360) {
-  // If file is HEIC, native browser decoders typically fail. Detect early.
-  const isHeic = file.name.match(/\.(heic|heif)$/i) || file.type.includes('heic') || file.type.includes('heif');
+  // If file is HEIC / HEIF, automatically convert to JPEG representation first
+  const isHeic = await isHeicFile(file);
   if (isHeic) {
-    return {
-      thumbnail: null,
-      width: 0,
-      height: 0,
-      format: 'heic',
-      isUnsupportedPreview: true
-    };
+    try {
+      const jpegBlob = await convertHeicToJpeg(file);
+      const convertedFile = new File(
+        [jpegBlob],
+        (file.name || 'image').replace(/\.(heic|heif)$/i, '') + '.jpg',
+        { type: 'image/jpeg' }
+      );
+      return await generateImageThumbnail(convertedFile, maxDimension);
+    } catch (err) {
+      console.warn('HEIC thumbnail conversion failed:', err);
+      return {
+        thumbnail: null,
+        width: 0,
+        height: 0,
+        format: 'heic',
+        isUnsupportedPreview: true,
+        error: err.message,
+      };
+    }
   }
 
   // Strategy A: createImageBitmap (Modern, fast, off-main-thread)
@@ -247,49 +289,75 @@ export function generateVideoPoster(file) {
 
 // Process a single file: extract metadata, hash, create thumbnail, verify storage
 export async function processFileItem(file, onProgress) {
-  const isVideo = file.type.startsWith('video/') || Boolean(file.name.match(/\.(mp4|mov|webm|m4v)$/i));
-  const isImage = file.type.startsWith('image/') || Boolean(file.name.match(/\.(jpe?g|png|webp|heic|heif)$/i));
+  const isHeic = await isHeicFile(file);
+  const isVideo = !isHeic && (file.type.startsWith('video/') || Boolean(file.name.match(/\.(mp4|mov|webm|m4v)$/i)));
+  const isImage = isHeic || file.type.startsWith('image/') || Boolean(file.name.match(/\.(jpe?g|png|webp|heic|heif|gif|svg)$/i));
 
-  onProgress?.({ stage: 'hashing', percent: 20 });
+  onProgress?.({ stage: 'hashing', percent: 15 });
   const hash = await computeFileHash(file);
 
   // Check for duplicates in local store
   const existingWithHash = await findMediaByHash(hash);
   const isDuplicate = Boolean(existingWithHash && existingWithHash.length > 0);
 
-  onProgress?.({ stage: 'metadata', percent: 45 });
+  // Extract metadata from the original file before conversion
+  onProgress?.({ stage: 'metadata', percent: 35 });
   const metadata = await extractFileMetadata(file);
 
-  onProgress?.({ stage: 'thumbnail', percent: 70 });
+  let convertedBlob = null;
   let visualInfo = { thumbnail: null, width: 0, height: 0, duration: 0, isUnsupportedPreview: false };
+  const mediaId = `media-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-  if (isImage) {
+  if (isHeic) {
+    onProgress?.({ stage: 'converting', percent: 55 });
+    try {
+      convertedBlob = await convertHeicToJpeg(file);
+    } catch (conversionErr) {
+      console.error(`Failed to convert HEIC image "${file.name}":`, conversionErr);
+      throw new Error(`HEIC conversion failed for "${file.name}": ${conversionErr.message || conversionErr}`);
+    }
+
+    onProgress?.({ stage: 'thumbnail', percent: 75 });
+    const convertedFile = new File(
+      [convertedBlob],
+      file.name.replace(/\.(heic|heif)$/i, '') + '.jpg',
+      { type: 'image/jpeg' }
+    );
+    visualInfo = await generateImageThumbnail(convertedFile);
+  } else if (isImage) {
+    onProgress?.({ stage: 'thumbnail', percent: 70 });
     visualInfo = await generateImageThumbnail(file);
   } else if (isVideo) {
+    onProgress?.({ stage: 'thumbnail', percent: 70 });
     visualInfo = await generateVideoPoster(file);
   }
 
-  const mediaId = `media-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-  // Create live blob preview URL for immediate session rendering
-  const liveBlobUrl = createBlobUrl(mediaId, file);
+  // Create live blob preview URLs:
+  // For HEIC files, convertedBlob is used for instant browser previews;
+  // fileBlob preserves the original high-resolution HEIC file for download and permanent storage.
+  const originalBlobUrl = createBlobUrl(mediaId, file);
+  const convertedBlobUrl = convertedBlob ? createBlobUrl(`${mediaId}_converted`, convertedBlob) : null;
+  const activePreviewUrl = convertedBlobUrl || originalBlobUrl;
 
   const mediaItem = {
     id: mediaId,
     originalFilename: file.name,
-    fileType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg'),
+    fileType: file.type || (isHeic ? 'image/heic' : (isVideo ? 'video/mp4' : 'image/jpeg')),
     mediaType: isVideo ? 'video' : 'image',
     fileSize: file.size,
     hash,
     isDuplicate,
     duplicateOfId: isDuplicate ? existingWithHash[0].id : null,
-    // File blob stored directly in IndexedDB for permanent recovery
+    // Preserve the original uploaded file (HEIC or other format)
     fileBlob: file,
-    // Live blob URL for this session
-    previewUrl: liveBlobUrl,
-    // Lightweight thumbnail DataURL for fast rendering
-    thumbnail: visualInfo.thumbnail || liveBlobUrl,
-    isUnsupportedPreview: visualInfo.isUnsupportedPreview,
+    // Converted JPEG representation for browser rendering
+    convertedBlob: convertedBlob || null,
+    // Live preview URL pointing to converted JPEG or original
+    previewUrl: activePreviewUrl,
+    // Lightweight thumbnail DataURL
+    thumbnail: visualInfo.thumbnail || activePreviewUrl,
+    isHeic,
+    isUnsupportedPreview: visualInfo.isUnsupportedPreview || false,
     dimensions: {
       width: visualInfo.width,
       height: visualInfo.height,
