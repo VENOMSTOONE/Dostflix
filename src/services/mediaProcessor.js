@@ -9,7 +9,26 @@ let heicDecodePromise = null;
 async function getHeicDecoder() {
   if (typeof window === 'undefined') return null;
   if (!heicDecodePromise) {
-    heicDecodePromise = import('heic-decode').then(m => m.default || m);
+    heicDecodePromise = import('heic-decode')
+      .then((m) => {
+        const fn = typeof m === 'function'
+          ? m
+          : (typeof m?.default === 'function'
+            ? m.default
+            : (typeof m?.default?.default === 'function'
+              ? m.default.default
+              : m?.default || m));
+        if (typeof fn !== 'function') {
+          throw new Error('Imported HEIC decoder module does not export a callable decode function.');
+        }
+        return fn;
+      })
+      .catch((err) => {
+        // Reset promise so subsequent calls can retry if there was a transient network or bundle issue
+        heicDecodePromise = null;
+        console.error('Failed to dynamically import heic-decode:', err);
+        throw new Error(`Failed to load HEIC decoder module: ${err.message || err}`);
+      });
   }
   return heicDecodePromise;
 }
