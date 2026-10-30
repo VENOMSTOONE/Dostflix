@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Search as SearchIcon, X, SlidersHorizontal, Eye, Calendar, MapPin, Tag, Users, Film, Video, Image as ImageIcon } from 'lucide-react';
-import { memories, collections } from '../data/memories';
+import { useMemories } from '../context/MemoryContext';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
@@ -17,6 +17,7 @@ const FRIEND_THEMES = {
 export default function Search() {
   const navigate = useNavigate();
   const { currentTheme } = useTheme();
+  const { memories, collections } = useMemories();
   const isFriendsTheme = currentTheme?.id === 'friends';
 
   const [query, setQuery] = useState('');

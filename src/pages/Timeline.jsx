@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { memories } from '../data/memories';
+import { useMemories } from '../context/MemoryContext';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar,
@@ -38,6 +38,7 @@ const MOOD_STYLES = {
 export default function Timeline() {
   const navigate = useNavigate();
   const { currentTheme } = useTheme();
+  const { memories } = useMemories();
   const isFriendsTheme = currentTheme?.id === 'friends';
 
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc' = oldest first, 'desc' = newest first

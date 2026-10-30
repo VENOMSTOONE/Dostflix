@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, Settings, User, Compass, Calendar, Camera, MapPin, Home as HomeIcon, BarChart2, Palette, Check, Sparkles, Tv, Disc3 } from 'lucide-react';
+import { Search, Bell, Settings, User, Compass, Calendar, Camera, MapPin, Home as HomeIcon, BarChart2, Palette, Check, Sparkles, Tv, Disc3, Film } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
 import ThemeSelectorModal from '../ui/ThemeSelectorModal';
@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { label: 'Timeline', path: '/timeline', icon: Calendar },
   { label: 'Keepsakes', path: '/keepsakes', icon: Camera },
   { label: 'Jukebox', path: '/jukebox', icon: Disc3 },
+  { label: 'Studio', path: '/studio', icon: Film },
   { label: 'Places', path: '/map', icon: MapPin },
   { label: 'Search', path: '/search', icon: Search },
   { label: 'Insights', path: '/stats', icon: BarChart2 },
@@ -328,6 +329,18 @@ export default function Navbar({ onOpenLounge }) {
                         <span>Theme</span>
                       </div>
                       <span className="text-[10px] text-zinc-500 truncate max-w-[80px]">{currentTheme.badge}</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setShowProfile(false);
+                        soundFx.playPop();
+                        navigate('/studio');
+                      }}
+                      className="w-full px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-white/5 rounded-xl transition-colors flex items-center gap-2"
+                    >
+                      <Film size={14} className="text-emerald-400" />
+                      <span>Memory Studio</span>
                     </button>
 
                     <button

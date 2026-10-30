@@ -24,7 +24,7 @@ import {
   Radio,
   Sliders
 } from 'lucide-react';
-import { memories, collections } from '../data/memories';
+import { useMemories } from '../context/MemoryContext';
 import MemoryVaultManager from '../components/ui/MemoryVaultManager';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
@@ -33,6 +33,7 @@ import soundFx from '../utils/soundFx';
 export default function Developer() {
   const navigate = useNavigate();
   const { currentTheme } = useTheme();
+  const { memories, collections } = useMemories();
   const isFriendsTheme = currentTheme?.id === 'friends';
   const [showVault, setShowVault] = useState(false);
   const [profile, setProfile] = useState(null);

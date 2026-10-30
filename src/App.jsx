@@ -12,6 +12,7 @@ import MapView from './pages/MapView';
 import Developer from './pages/Developer';
 import Keepsakes from './pages/Keepsakes';
 import Jukebox from './pages/Jukebox';
+import MemoryStudio from './pages/MemoryStudio';
 import ScrollToTop from './components/layout/ScrollToTop';
 import useKonamiCode from './hooks/useKonamiCode';
 import DeveloperBanner from './components/ui/DeveloperBanner';
@@ -62,6 +63,7 @@ function AppLayout() {
           <Route path="/developer" element={<Developer />} />
           <Route path="/keepsakes" element={<Keepsakes />} />
           <Route path="/jukebox" element={<Jukebox />} />
+          <Route path="/studio" element={<MemoryStudio />} />
         </Routes>
       </main>
 

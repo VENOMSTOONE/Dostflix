@@ -91,15 +91,34 @@ export default function Home() {
           />
         )}
 
-        {collections.map(collection => (
-          <MemoryRow
-            key={collection.id}
-            title={collection.title}
-            memories={memories.filter(m => m.collectionId === collection.id)}
-            favorites={favorites}
-            onToggleFavorite={toggleFavorite}
-          />
-        ))}
+        {collections.map(collection => {
+          const matching = memories.filter(m => m.collectionId === collection.id);
+          if (matching.length === 0) return null;
+          return (
+            <MemoryRow
+              key={collection.id}
+              title={collection.title}
+              memories={matching}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+            />
+          );
+        })}
+
+        {/* Recently Added Studio Creations / Uncategorized */}
+        {(() => {
+          const uncategorized = memories.filter(m => !collections.some(c => c.id === m.collectionId));
+          if (uncategorized.length === 0) return null;
+          return (
+            <MemoryRow
+              key="studio-vault"
+              title="Studio Vault & New Additions"
+              memories={uncategorized}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+            />
+          );
+        })()}
 
         {favorites.length > 0 && (
           <MemoryRow

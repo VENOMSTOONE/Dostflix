@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { memories } from '../data/memories';
+import { useMemories } from '../context/MemoryContext';
 import {
   MapPin,
   Compass,
@@ -115,6 +115,7 @@ const FRIEND_COLORS = {
 export default function MapView() {
   const navigate = useNavigate();
   const { currentTheme } = useTheme();
+  const { memories } = useMemories();
   const isFriendsTheme = currentTheme?.id === 'friends';
 
   const [selectedLoc, setSelectedLoc] = useState(LOCATIONS[1]); // Default to Dosa Cafe

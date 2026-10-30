@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Play, Calendar, MapPin, Smile, ArrowLeft, Heart, Sparkles, User, HelpCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { memories, collections } from '../data/memories';
+import { useMemories } from '../context/MemoryContext';
 import useFavorites from '../hooks/useFavorites';
 import CinemaPlayer from '../components/player/CinemaPlayer';
 
@@ -11,6 +11,7 @@ export default function Details() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { favorites, toggleFavorite } = useFavorites();
+  const { memories, collections } = useMemories();
 
   const [activeMedia, setActiveMedia] = useState(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
