@@ -1,5 +1,14 @@
 {
+  "functions": {
+    "api/**/*.js": {
+      "includeFiles": "private_media/**"
+    }
+  },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/api/auth/:path*", "destination": "/api/auth/:path*" },
+    { "source": "/api/media", "destination": "/api/media" },
+    { "source": "/WhatsApp:rest*", "destination": "/api/media?file=WhatsApp:rest*" },
+    { "source": "/Polaroids/:rest*", "destination": "/api/media?file=Polaroids/:rest*" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, Settings, User, Compass, Calendar, Camera, MapPin, Home as HomeIcon, BarChart2, Palette, Check, Sparkles, Tv, Disc3, Film } from 'lucide-react';
+import { Search, Bell, Settings, User, Compass, Calendar, Camera, MapPin, Home as HomeIcon, BarChart2, Palette, Check, Sparkles, Tv, Disc3, Film, Lock } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
 import ThemeSelectorModal from '../ui/ThemeSelectorModal';
 import soundFx from '../../utils/soundFx';
 
@@ -55,6 +56,7 @@ export default function Navbar({ onOpenLounge }) {
   const [unreadCount, setUnreadCount] = useState(2);
 
   const { currentTheme } = useTheme();
+  const { lockDostflix } = useAuth();
   const isFriendsTheme = currentTheme?.id === 'friends';
   const navigate = useNavigate();
   const location = useLocation();
@@ -212,6 +214,18 @@ export default function Navbar({ onOpenLounge }) {
                   className="absolute bottom-1 right-1 w-2 h-2 rounded-full ring-2 ring-[#09090b]"
                   style={{ backgroundColor: currentTheme.colors.accent }}
                 />
+              </button>
+
+              {/* Lock Dostflix (The Inner Circle) */}
+              <button
+                onClick={() => {
+                  soundFx.playPop();
+                  lockDostflix();
+                }}
+                className="p-2 rounded-full hover:bg-white/10 text-zinc-400 hover:text-amber-400 transition-colors"
+                title="Lock Dostflix (The Inner Circle)"
+              >
+                <Lock size={17} />
               </button>
 
               {/* Notifications Popover */}
@@ -393,10 +407,22 @@ export default function Navbar({ onOpenLounge }) {
 
                     <button
                       onClick={() => {
+                        setShowProfile(false);
+                        soundFx.playPop();
+                        lockDostflix();
+                      }}
+                      className="w-full px-3 py-2 text-left text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 rounded-xl transition-colors flex items-center gap-2 font-medium border-t border-white/5 mt-1"
+                    >
+                      <Lock size={14} className="text-amber-400" />
+                      <span>Lock Dostflix</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
                         localStorage.removeItem('activeProfile');
                         navigate('/');
                       }}
-                      className="w-full px-3 py-2 text-left text-red-400 hover:bg-red-600/10 rounded-xl transition-colors border-t border-white/5 mt-1 font-semibold"
+                      className="w-full px-3 py-2 text-left text-red-400 hover:bg-red-600/10 rounded-xl transition-colors font-semibold"
                     >
                       Sign Out
                     </button>
@@ -457,6 +483,19 @@ export default function Navbar({ onOpenLounge }) {
         >
           <Palette size={17} />
           <span className="text-[9px] font-medium">Theme</span>
+        </button>
+
+        {/* Mobile Lock trigger */}
+        <button
+          onClick={() => {
+            soundFx.playPop();
+            lockDostflix();
+          }}
+          className="flex flex-col items-center gap-1 py-1 px-2 rounded-xl text-zinc-400 hover:text-amber-400 transition-all"
+          title="Lock Dostflix"
+        >
+          <Lock size={17} />
+          <span className="text-[9px] font-medium">Lock</span>
         </button>
       </div>
 

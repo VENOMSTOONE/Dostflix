@@ -22,8 +22,11 @@ import MusicPlayer from './components/ui/MusicPlayer';
 import LoungeMode from './components/ui/LoungeMode';
 import { MemoryProvider } from './context/MemoryContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import TheInnerCircle from './components/auth/TheInnerCircle';
 
 function AppLayout() {
+  const { isAuthenticated } = useAuth();
   const isUnlocked = useKonamiCode();
   const [showBanner, setShowBanner] = React.useState(true);
   const [isLoading, setIsLoading] = useState(true);
@@ -36,6 +39,29 @@ function AppLayout() {
     setIsLoading(false);
   }, []);
 
+  // 1. Initial session checking state
+  if (isAuthenticated === null) {
+    return (
+      <div className="min-h-screen w-full bg-[#09090b] flex items-center justify-center select-none">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-zinc-700 animate-ping" />
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated: Display The Inner Circle
+  if (!isAuthenticated) {
+    return (
+      <TheInnerCircle
+        onUnlockSuccess={() => {
+          setIsLoading(false); // Smoothly transition into Dostflix without Netflix intro
+        }}
+      />
+    );
+  }
+
+  // 3. Authenticated cold load: Play intro once if needed
   if (isLoading) {
     return <IntroLoader onFinish={handleFinishIntro} />;
   }
@@ -74,15 +100,17 @@ function AppLayout() {
 
 function App() {
   return (
-    <ThemeProvider>
-      <MemoryProvider>
-        <AudioProvider>
-          <Router>
-            <AppLayout />
-          </Router>
-        </AudioProvider>
-      </MemoryProvider>
-    </ThemeProvider>
+    <AuthProvider>
+      <ThemeProvider>
+        <MemoryProvider>
+          <AudioProvider>
+            <Router>
+              <AppLayout />
+            </Router>
+          </AudioProvider>
+        </MemoryProvider>
+      </ThemeProvider>
+    </AuthProvider>
   );
 }
 

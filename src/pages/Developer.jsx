@@ -22,9 +22,11 @@ import {
   Play,
   Shuffle,
   Radio,
-  Sliders
+  Sliders,
+  Lock
 } from 'lucide-react';
 import { useMemories } from '../context/MemoryContext';
+import { useAuth } from '../context/AuthContext';
 import MemoryVaultManager from '../components/ui/MemoryVaultManager';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
@@ -33,6 +35,7 @@ import soundFx from '../utils/soundFx';
 export default function Developer() {
   const navigate = useNavigate();
   const { currentTheme } = useTheme();
+  const { lockDostflix } = useAuth();
   const { memories, collections } = useMemories();
   const isFriendsTheme = currentTheme?.id === 'friends';
   const [showVault, setShowVault] = useState(false);
@@ -288,6 +291,34 @@ export default function Developer() {
             className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/5 transition-all self-start sm:self-auto"
           >
             Switch Profile
+          </button>
+        </div>
+
+        {/* The Inner Circle Vault Security Card */}
+        <div className="bg-zinc-900/70 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center font-black text-lg shadow-lg">
+              <Lock size={20} />
+            </div>
+            <div>
+              <div className="text-xs text-amber-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                The Inner Circle
+              </div>
+              <h3 className="text-xl font-bold text-white">Vault Access Protected</h3>
+              <p className="text-xs text-zinc-400 font-light">Authenticated server session active with encrypted cookie credentials</p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              soundFx.playPop();
+              lockDostflix();
+            }}
+            className="px-4 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold transition-all flex items-center gap-2 self-start sm:self-auto cursor-pointer"
+          >
+            <Lock size={13} />
+            <span>Lock Dostflix</span>
           </button>
         </div>
 
