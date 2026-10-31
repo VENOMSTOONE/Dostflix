@@ -1,11 +1,15 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, Eye, EyeOff, Sparkles, Check, ArrowRight, ShieldCheck, KeyRound } from 'lucide-react';
+import { Lock, Eye, EyeOff, Check, ArrowRight, ShieldCheck, KeyRound } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import soundFx from '../../utils/soundFx';
 
 export default function TheInnerCircle({ onUnlockSuccess }) {
   const { unlock, isVerifying, authError, setAuthError } = useAuth();
+  const { currentTheme } = useTheme();
+  const isFriendsTheme = currentTheme?.id === 'friends';
+
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -28,202 +32,239 @@ export default function TheInnerCircle({ onUnlockSuccess }) {
     } else {
       soundFx.playPop();
       setShake(prev => prev + 1);
-      // Select input for convenient re-entry
       inputRef.current?.focus();
       inputRef.current?.select();
     }
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#09090b] text-white flex flex-col justify-between items-center relative overflow-hidden select-none px-4 sm:px-6 py-8 sm:py-12">
+    <div className="min-h-screen w-full bg-[#09090b] text-white flex flex-col justify-between relative overflow-hidden select-none">
       
-      {/* Cinematic Ambient Atmosphere */}
-      <div 
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] sm:w-[900px] h-[450px] sm:h-[600px] rounded-full blur-[170px] pointer-events-none opacity-20 -z-10"
-        style={{
-          background: 'radial-gradient(circle, rgba(168,85,247,0.3) 0%, rgba(20,184,166,0.15) 50%, transparent 80%)'
-        }}
-      />
+      {/* Cinematic Poster Backdrop with Netflix Vignette */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+        {/* Memory Poster Grid Texture */}
+        <div 
+          className="absolute inset-0 opacity-15 scale-105 filter blur-[3px]"
+          style={{
+            backgroundImage: `radial-gradient(circle at center, transparent 0%, #09090b 80%), 
+              repeating-linear-gradient(45deg, #18181b 0, #18181b 120px, #121215 120px, #121215 240px)`,
+            backgroundSize: 'cover'
+          }}
+        />
 
-      {/* Subtle Top Vignette Grid */}
-      <div 
-        className="absolute inset-0 pointer-events-none opacity-[0.025] -z-10"
-        style={{
-          backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)',
-          backgroundSize: '32px 32px'
-        }}
-      />
+        {/* Ambient Radial Theme Spotlight */}
+        <div 
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] md:w-[1000px] h-[500px] md:h-[700px] rounded-full blur-[190px] opacity-25 transition-colors duration-700"
+          style={{ backgroundColor: currentTheme.colors.accent }}
+        />
 
-      {/* TOP: Brand Identity Bar */}
-      <header className="w-full max-w-5xl flex items-center justify-between z-10">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl sm:text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-red-600 via-rose-500 to-amber-500">
-            DOSTFLIX
-          </span>
-          <span className="text-zinc-600">•</span>
-          <span className="text-[10px] sm:text-xs font-mono font-medium tracking-[0.2em] text-zinc-400 uppercase">
-            Vault
-          </span>
+        {/* Deep Netflix Dark Gradient Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-[#09090b]/80 to-[#09090b]/60" />
+      </div>
+
+      {/* TOP HEADER: Official DostFlix Brand Identity */}
+      <header className="w-full px-6 sm:px-12 md:px-16 py-6 sm:py-8 flex items-center justify-between z-10 relative">
+        <div className="flex items-center gap-2 select-none">
+          {isFriendsTheme ? (
+            <div className="flex items-center text-2xl sm:text-3xl font-black tracking-widest text-white">
+              <span>D</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 mx-0.5 sm:mx-1" />
+              <span>O</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mx-0.5 sm:mx-1" />
+              <span>S</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 mx-0.5 sm:mx-1" />
+              <span>T</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 mx-0.5 sm:mx-1" />
+              <span>F</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 mx-0.5 sm:mx-1" />
+              <span>L</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mx-0.5 sm:mx-1" />
+              <span>I</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 mx-0.5 sm:mx-1" />
+              <span>X</span>
+            </div>
+          ) : (
+            <h1
+              className="text-3xl sm:text-4xl font-black tracking-tighter"
+              style={{ 
+                color: currentTheme.colors.accent,
+                textShadow: '0 0 25px var(--accent-glow)'
+              }}
+            >
+              DostFlix
+            </h1>
+          )}
         </div>
 
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.08] text-[10px] sm:text-xs font-mono text-zinc-400">
-          <Lock size={11} className="text-zinc-400" />
-          <span>Encrypted Session</span>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-white/10 text-xs font-medium text-zinc-300 backdrop-blur-md shadow-lg">
+          <Lock size={12} style={{ color: currentTheme.colors.accent }} />
+          <span className="tracking-wide">Private Vault</span>
         </div>
       </header>
 
-      {/* CENTER: The Inner Circle Authentication Form */}
-      <main className="w-full max-w-md my-auto py-8 z-10 flex flex-col items-center text-center">
-        
-        {/* Subtle Badge */}
+      {/* CENTER: Netflix-Style Authentication Card */}
+      <main className="w-full flex-1 flex items-center justify-center px-4 sm:px-6 py-6 z-10 relative">
         <motion.div
-          initial={{ opacity: 0, y: -10 }}
+          initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-white/[0.08] text-[11px] font-mono tracking-[0.18em] text-zinc-400 uppercase mb-6"
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+          className="w-full max-w-[460px] bg-black/75 sm:bg-black/80 border border-white/10 rounded-2xl sm:rounded-3xl p-7 sm:p-11 shadow-2xl backdrop-blur-2xl flex flex-col relative"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-          <span>The Inner Circle</span>
-        </motion.div>
+          {/* Subtle Accent Glow Ring at Top of Card */}
+          <div 
+            className="absolute top-0 inset-x-8 h-[2px] rounded-full blur-[1px] opacity-75"
+            style={{ 
+              background: `linear-gradient(90deg, transparent, ${currentTheme.colors.accent}, transparent)` 
+            }}
+          />
 
-        {/* Editorial Heading */}
-        <motion.h1
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, delay: 0.08, ease: 'easeOut' }}
-          className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-white mb-3 leading-snug"
-        >
-          Some memories are meant to stay between us.
-        </motion.h1>
+          {/* Section Eyebrow */}
+          <div className="flex items-center gap-2 mb-4">
+            <span 
+              className="w-2 h-2 rounded-full animate-pulse shadow-[0_0_8px_var(--accent-glow)]"
+              style={{ backgroundColor: currentTheme.colors.accent }}
+            />
+            <span 
+              className="text-[11px] font-bold tracking-[0.2em] uppercase font-mono"
+              style={{ color: currentTheme.colors.accent }}
+            >
+              The Inner Circle
+            </span>
+          </div>
 
-        {/* Supporting Copy */}
-        <motion.p
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, delay: 0.15, ease: 'easeOut' }}
-          className="text-xs sm:text-sm text-zinc-400 leading-relaxed max-w-sm mb-8"
-        >
-          A little corner of the internet, reserved for our favourite people and the moments we never want to forget.
-        </motion.p>
+          {/* Main Heading */}
+          <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-white mb-2 leading-tight">
+            Some memories are meant to stay between us.
+          </h2>
 
-        {/* Authentication Card / Form */}
-        <motion.div
-          key={shake}
-          initial={{ x: 0 }}
-          animate={shake ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}}
-          transition={{ duration: 0.45, ease: 'easeInOut' }}
-          className="w-full"
-        >
-          <form onSubmit={handleSubmit} className="w-full space-y-4" noValidate>
-            
-            {/* Password Input Container */}
-            <div className="relative w-full">
-              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none flex items-center">
-                <KeyRound size={17} />
+          {/* Supporting Copy */}
+          <p className="text-xs sm:text-sm text-zinc-400 font-light leading-relaxed mb-6">
+            A little corner of the internet, reserved for our favourite people and the moments we never want to forget.
+          </p>
+
+          {/* Form */}
+          <motion.div
+            key={shake}
+            initial={{ x: 0 }}
+            animate={shake ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}}
+            transition={{ duration: 0.45, ease: 'easeInOut' }}
+            className="w-full"
+          >
+            <form onSubmit={handleSubmit} className="w-full space-y-4" noValidate>
+              
+              {/* Password Input */}
+              <div className="relative w-full">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none flex items-center">
+                  <KeyRound size={17} />
+                </div>
+
+                <input
+                  ref={inputRef}
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (authError) setAuthError(null);
+                  }}
+                  disabled={isVerifying || isSuccess}
+                  autoFocus
+                  autoComplete="current-password"
+                  placeholder="Enter the secret passphrase"
+                  aria-label="Secret Passphrase"
+                  className={`w-full pl-11 pr-11 py-3.5 bg-zinc-800/80 hover:bg-zinc-800 focus:bg-zinc-800/95 border rounded-xl text-sm text-white placeholder:text-zinc-500 outline-none transition-all duration-200 ${
+                    authError 
+                      ? 'border-red-500/80 focus:border-red-400 focus:ring-1 focus:ring-red-500/30' 
+                      : isSuccess
+                        ? 'border-emerald-500/80 bg-emerald-500/10'
+                        : 'border-white/10 hover:border-white/20 focus:border-white/40 focus:ring-1 focus:ring-white/20'
+                  }`}
+                />
+
+                {/* Password Visibility Toggle */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundFx.playClick();
+                    setShowPassword(prev => !prev);
+                  }}
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Hide passphrase' : 'Show passphrase'}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-white transition-colors"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
 
-              <input
-                ref={inputRef}
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  if (authError) setAuthError(null);
-                }}
-                disabled={isVerifying || isSuccess}
-                autoFocus
-                autoComplete="current-password"
-                placeholder="Enter the secret passphrase"
-                aria-label="Secret Passphrase"
-                className={`w-full pl-10 pr-11 py-3.5 bg-zinc-900/60 border rounded-2xl text-sm text-white placeholder:text-zinc-500 outline-none transition-all duration-200 ${
-                  authError 
-                    ? 'border-rose-500/60 focus:border-rose-400 focus:ring-1 focus:ring-rose-500/30' 
-                    : isSuccess
-                      ? 'border-emerald-500/60 bg-emerald-500/[0.04]'
-                      : 'border-white/[0.12] hover:border-white/20 focus:border-white/30 focus:ring-1 focus:ring-white/20'
-                }`}
-              />
-
-              {/* Password visibility toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  soundFx.playClick();
-                  setShowPassword(prev => !prev);
-                }}
-                tabIndex={-1}
-                aria-label={showPassword ? 'Hide passphrase' : 'Show passphrase'}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-white transition-colors"
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-
-            {/* Error Message */}
-            <AnimatePresence>
-              {authError && !isSuccess && (
-                <motion.div
-                  initial={{ opacity: 0, y: -4, height: 0 }}
-                  animate={{ opacity: 1, y: 0, height: 'auto' }}
-                  exit={{ opacity: 0, y: -4, height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <p className="text-xs text-rose-400 font-medium py-1 px-1 text-center">
-                    {authError}
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Success State Indicator */}
-            <AnimatePresence>
-              {isSuccess && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="py-2.5 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-2"
-                >
-                  <Check size={14} strokeWidth={3} className="text-emerald-400" />
-                  <span>Welcome to our little world.</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Submit Button */}
-            {!isSuccess && (
-              <button
-                type="submit"
-                disabled={isVerifying || !password.trim()}
-                className="w-full py-3.5 rounded-2xl bg-white hover:bg-zinc-200 active:scale-[0.99] text-zinc-950 font-bold text-sm transition-all shadow-xl shadow-white/5 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isVerifying ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
-                    <span>Verifying passphrase...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Unlock Dostflix</span>
-                    <ArrowRight size={15} />
-                  </>
+              {/* Error Message */}
+              <AnimatePresence>
+                {authError && !isSuccess && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4, height: 0 }}
+                    animate={{ opacity: 1, y: 0, height: 'auto' }}
+                    exit={{ opacity: 0, y: -4, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="px-3.5 py-2 rounded-xl bg-red-600/15 border border-red-500/30 text-red-300 text-xs font-medium text-left">
+                      {authError}
+                    </div>
+                  </motion.div>
                 )}
-              </button>
-            )}
+              </AnimatePresence>
 
-          </form>
+              {/* Success State Indicator */}
+              <AnimatePresence>
+                {isSuccess && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="py-3 px-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2"
+                  >
+                    <Check size={16} strokeWidth={3} className="text-emerald-400" />
+                    <span>Welcome to our little world.</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Signature Netflix Theme Button */}
+              {!isSuccess && (
+                <button
+                  type="submit"
+                  disabled={isVerifying || !password.trim()}
+                  className="w-full py-3.5 rounded-xl font-black text-sm text-white tracking-wide transition-all shadow-xl flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer hover:brightness-110 active:scale-[0.99]"
+                  style={{
+                    backgroundColor: currentTheme.colors.accent,
+                    boxShadow: `0 4px 20px ${currentTheme.colors.accentGlow || 'rgba(229, 9, 20, 0.4)'}`
+                  }}
+                >
+                  {isVerifying ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Verifying passphrase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Unlock Dostflix</span>
+                      <ArrowRight size={16} strokeWidth={2.5} />
+                    </>
+                  )}
+                </button>
+              )}
+
+            </form>
+          </motion.div>
+
+          {/* Sub-badge Requirement */}
+          <div className="mt-8 pt-6 border-t border-white/5 flex items-center justify-center gap-1.5 text-xs text-zinc-500 font-medium">
+            <ShieldCheck size={14} className="text-zinc-500" />
+            <span>Private access · Friends only</span>
+          </div>
+
         </motion.div>
-
-        {/* Sub-badge Requirement */}
-        <div className="mt-8 text-[11px] font-mono tracking-wider text-zinc-500 uppercase flex items-center justify-center gap-1.5">
-          <ShieldCheck size={13} className="text-zinc-500" />
-          <span>Private access · Friends only</span>
-        </div>
-
       </main>
 
-      {/* FOOTER: Minimal Privacy Assurance */}
-      <footer className="w-full max-w-5xl text-center text-[10px] sm:text-xs text-zinc-600 font-mono z-10">
-        <span>Curated with love for our inner circle • All rights reserved</span>
+      {/* FOOTER: Authentic Dostflix Footer */}
+      <footer className="w-full py-5 text-center text-xs text-zinc-500 z-10 relative border-t border-white/5 bg-[#09090b]/80 backdrop-blur-md">
+        <span>Dostflix Private Vault · Reserved for our favourite people</span>
       </footer>
 
     </div>
