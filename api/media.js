@@ -38,12 +38,17 @@ export default async function handler(req, res) {
   // Normalize and clean path to prevent directory traversal attacks
   const normalized = path.normalize(requestedFile).replace(/^(\.\.(\/|\\|$))+/, '');
   
-  // Resolve against private_media root
-  const baseDir = path.resolve(process.cwd(), 'private_media');
-  const targetPath = path.resolve(baseDir, normalized);
+  // Resolve against private_media or public root
+  const privateDir = path.resolve(process.cwd(), 'private_media');
+  const publicDir = path.resolve(process.cwd(), 'public');
 
-  // Security check: target must be inside private_media
-  if (!targetPath.startsWith(baseDir)) {
+  let targetPath = path.resolve(privateDir, normalized);
+  if (!targetPath.startsWith(privateDir) || !fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+    targetPath = path.resolve(publicDir, normalized);
+  }
+
+  // Security check: target must be inside private_media or public
+  if (!targetPath.startsWith(privateDir) && !targetPath.startsWith(publicDir)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 

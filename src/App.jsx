@@ -39,7 +39,12 @@ function AppLayout() {
     setIsLoading(false);
   }, []);
 
-  // 1. Initial session checking state
+  // 1. Dostflix loading animation plays first on cold load
+  if (isLoading) {
+    return <IntroLoader onFinish={handleFinishIntro} />;
+  }
+
+  // 2. Initial session checking state (if still resolving in background)
   if (isAuthenticated === null) {
     return (
       <div className="min-h-screen w-full bg-[#09090b] flex items-center justify-center select-none">
@@ -50,20 +55,15 @@ function AppLayout() {
     );
   }
 
-  // 2. Unauthenticated: Display The Inner Circle
+  // 3. Authentication pop: appears just after loading animation and right before profile selection
   if (!isAuthenticated) {
     return (
       <TheInnerCircle
         onUnlockSuccess={() => {
-          setIsLoading(false); // Smoothly transition into Dostflix without Netflix intro
+          // Unlocked successfully; React re-renders with isAuthenticated=true, displaying Profiles (or active route)
         }}
       />
     );
-  }
-
-  // 3. Authenticated cold load: Play intro once if needed
-  if (isLoading) {
-    return <IntroLoader onFinish={handleFinishIntro} />;
   }
 
   return (
